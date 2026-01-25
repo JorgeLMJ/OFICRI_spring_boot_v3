@@ -1,11 +1,14 @@
 package com.example.sistema_web.controller;
-
+import com.example.sistema_web.config.JwtAuthFilter;
 import com.example.sistema_web.dto.OficioDosajeDTO;
 import com.example.sistema_web.service.OficioDosajeService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.*;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,15 +20,95 @@ import java.util.Map;
 public class OficioDosajeController {
 
     private final OficioDosajeService service;
+    private static final String DOCKER_HOST = "host.docker.internal";
+
+    // 1. Crear Oficio
+    @PostMapping("/nuevo")
+    public ResponseEntity<Long> iniciarNuevoOficioDosaje() {
+        Long nuevoId = service.crearOficioDosajeVacio();
+        System.out.println("🆕 Nuevo oficio dosaje creado con ID: " + nuevoId);
+        return ResponseEntity.ok(nuevoId);
+    }
+
+    // 2. CONFIG EDITOR (Con validación, SIN crear basura)
+    @GetMapping("/{id}/editor-config")
+    public ResponseEntity<Map<String, Object>> getEditorConfig(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "edit") String mode) {
+
+        if (!service.existeOficioDosaje(id)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> config = new HashMap<>();
+        config.put("documentType", "word");
+        config.put("width", "100%");
+        config.put("height", "100%");
+
+        Map<String, Object> document = new HashMap<>();
+        document.put("fileType", "docx");
+        // ✅ Key dinámica para evitar caché
+        document.put("key", "oficio-" + id + "-" + System.currentTimeMillis());
+        document.put("title", "Oficio_Dosaje_" + id + ".docx");
+        document.put("url", "http://" + DOCKER_HOST + ":8080/api/oficio-dosaje/" + id + "/download");
+
+        Map<String, Object> editorConfig = new HashMap<>();
+        editorConfig.put("mode", mode);
+        editorConfig.put("lang", "es");
+        editorConfig.put("callbackUrl", "http://" + DOCKER_HOST + ":8080/api/oficio-dosaje/" + id + "/save-callback");
+
+        config.put("document", document);
+        config.put("editorConfig", editorConfig);
+
+        return ResponseEntity.ok(config);
+    }
+
+    // 3. Descargar archivo (Usado por OnlyOffice y el usuario)
+    @GetMapping("/{id}/download")
+    public ResponseEntity<Resource> downloadOficioDosaje(@PathVariable Long id) {
+        byte[] data = service.obtenerContenidoArchivo(id);
+        ByteArrayResource resource = new ByteArrayResource(data);
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"oficio_dosaje.docx\"")
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+                .contentLength(data.length)
+                .body(resource);
+    }
+
+    // 4. Callback de Guardado (OnlyOffice)
+    @PostMapping("/{id}/save-callback")
+    public ResponseEntity<Map<String, Object>> saveCallback(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> payload,
+            @RequestParam(required = false) Long documentoId) {
+
+        Integer status = (Integer) payload.get("status");
+
+        // 👇 IMPRIMIR EL STATUS PARA DEPURAR
+        System.out.println("📨 Callback recibido para ID " + id + " | Status: " + status);
+
+        // ✅ CORRECCIÓN: Aceptamos Status 6 (Force Save) Y Status 2 (Cierre del editor)
+        if (status != null && (status == 2 || status == 6)) {
+            String urlDescarga = (String) payload.get("url");
+
+            // Solo intentamos guardar si hay una URL de descarga válida
+            if (urlDescarga != null && !urlDescarga.isEmpty()) {
+                System.out.println("💾 Guardando cambios (Status " + status + ") para Oficio ID: " + id);
+                service.actualizarDesdeUrlOnlyOffice(id, urlDescarga, documentoId);
+            } else {
+                System.out.println("⚠️ Status " + status + " recibido pero sin URL de descarga (posiblemente sin cambios).");
+            }
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("error", 0);
+        return ResponseEntity.ok(response);
+    }
 
     @PostMapping
     public ResponseEntity<OficioDosajeDTO> crear(@RequestBody OficioDosajeDTO dto) {
         return ResponseEntity.ok(service.crear(dto));
-    }
-
-    @GetMapping("/{id}")
-    public ResponseEntity<OficioDosajeDTO> obtener(@PathVariable Long id) {
-        return ResponseEntity.ok(service.obtenerPorId(id));
     }
 
     @GetMapping
@@ -33,49 +116,57 @@ public class OficioDosajeController {
         return ResponseEntity.ok(service.listar());
     }
 
-    @PutMapping("/{id}")
-    public ResponseEntity<OficioDosajeDTO> actualizar(@PathVariable Long id, @RequestBody OficioDosajeDTO dto) {
-        return ResponseEntity.ok(service.actualizar(id, dto));
-    }
-
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> eliminar(@PathVariable Long id) {
+    @DeleteMapping("/{id}/cancelar")
+    public ResponseEntity<Void> cancelarEdicion(@PathVariable Long id) {
         service.eliminar(id);
+        System.out.println("🗑️ Borrador ID " + id + " eliminado por cancelación del usuario.");
         return ResponseEntity.noContent().build();
     }
 
-    @GetMapping("/{id}/download")
-    public ResponseEntity<byte[]> descargarArchivo(@PathVariable Long id) {
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> eliminarOficioDosaje(@PathVariable Long id) {
         try {
-            byte[] contenido = service.obtenerContenidoArchivo(id);
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=oficio_dosaje.docx")
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                    .body(contenido);
+            service.eliminar(id);
+            return ResponseEntity.ok().build();
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
     }
 
-    @GetMapping("/{id}/editor-config")
-    public ResponseEntity<Map<String, Object>> getConfig(@PathVariable Long id, @RequestParam(defaultValue = "edit") String mode) {
-        return ResponseEntity.ok(service.getEditorConfig(id, mode));
-    }
-
-    @PostMapping("/{id}/callback")
-    public ResponseEntity<Map<String, Object>> callback(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        Map<String, Object> response = new HashMap<>();
+    @PostMapping("/{id}/upload-directo")
+    public ResponseEntity<String> subirArchivoManual(
+            @PathVariable Long id,
+            @RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
         try {
-            // Status 2: El documento está listo para ser guardado
-            if (body.get("status").toString().equals("2")) {
-                service.actualizarDesdeOnlyOffice(id, body.get("url").toString());
-            }
-            response.put("error", 0);
-            return ResponseEntity.ok(response);
+            // Convertimos el archivo recibido a bytes
+            byte[] contenido = file.getBytes();
+
+            // Llamamos a tu servicio (que ya tiene este método uploadDocumento)
+            service.uploadOficioDosaje(id, contenido);
+
+            return ResponseEntity.ok("✅ Archivo recibido y guardado en BD. Tamaño: " + contenido.length + " bytes.");
         } catch (Exception e) {
-            response.put("error", 1);
-            response.put("message", e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            return ResponseEntity.status(500).body("❌ Error al subir: " + e.getMessage());
         }
     }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<OficioDosajeDTO> obtenerPorId(@PathVariable Long id) {
+        return ResponseEntity.ok(service.obtenerPorId(id));
+    }
+
+    @PostMapping("/{id}/actualizar-tag")
+    public ResponseEntity<?> actualizarTag(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> payload) {
+
+        String tag = payload.get("tag");   // Ej: "FECHA"
+        String valor = payload.get("valor"); // Ej: "01/10/2025"
+
+        service.actualizarTagEnWord(id, tag, valor);
+
+        return ResponseEntity.ok(Map.of("mensaje", "Word actualizado correctamente"));
+    }
+
+
 }

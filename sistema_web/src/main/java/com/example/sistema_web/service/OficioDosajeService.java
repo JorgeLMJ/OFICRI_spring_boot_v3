@@ -1,8 +1,6 @@
-// src/main/java/com/example/sistema_web/service/OficioDosajeService.java
 package com.example.sistema_web.service;
 import com.example.sistema_web.dto.OficioDosajeDTO;
 import java.util.List;
-import java.util.Map;
 
 public interface OficioDosajeService {
     OficioDosajeDTO crear(OficioDosajeDTO dto);
@@ -10,9 +8,11 @@ public interface OficioDosajeService {
     List<OficioDosajeDTO> listar();
     OficioDosajeDTO actualizar(Long id, OficioDosajeDTO dto);
     void eliminar(Long id);
-
-    // Métodos para OnlyOffice
     byte[] obtenerContenidoArchivo(Long id);
-    Map<String, Object> getEditorConfig(Long id, String mode);
-    void actualizarDesdeOnlyOffice(Long id, String urlDescarga);
+    void actualizarDesdeUrlOnlyOffice(Long id, String urlDescarga, Long documentoId);
+    boolean existeOficioDosaje(Long id);
+    void uploadOficioDosaje(Long id, byte[] archivoBytes);
+    Long crearOficioDosajeVacio();
+    void actualizarCampoEnWord(Long id, String tag, String valor);
+    void actualizarTagEnWord(Long id, String tagBuscado, String nuevoValor);
 }

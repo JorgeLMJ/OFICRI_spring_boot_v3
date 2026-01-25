@@ -77,8 +77,6 @@ public class DocumentoController {
         return ResponseEntity.ok(config);
     }
 
-    // --- RESTO DE ENDPOINTS ---
-
     @GetMapping("/{id}/download")
     public ResponseEntity<Resource> downloadDocumento(@PathVariable Long id) {
         byte[] data = service.obtenerContenidoArchivo(id);
@@ -163,4 +161,19 @@ public class DocumentoController {
     @GetMapping("/{id}")
     public ResponseEntity<DocumentoDTO> obtenerPorId(@PathVariable Long id) {
         return ResponseEntity.ok(service.obtenerPorId(id));
-    }}
+    }
+
+    @PostMapping("/{id}/actualizar-tag")
+    public ResponseEntity<?> actualizarTag(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> payload) {
+
+        String tag = payload.get("tag");   // Ej: "CUANTITATIVO"
+        String valor = payload.get("valor"); // Ej: "0.55"
+
+        service.actualizarTagEnWord(id, tag, valor);
+
+        return ResponseEntity.ok(Map.of("mensaje", "Word actualizado correctamente"));
+    }
+
+}

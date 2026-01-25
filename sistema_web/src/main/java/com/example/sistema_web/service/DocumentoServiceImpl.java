@@ -391,4 +391,160 @@ public class DocumentoServiceImpl implements DocumentoService {
         }
         return encontrado;
     }
+    @Override
+    @Transactional
+    public void actualizarTagEnWord(Long id, String tagBuscado, String nuevoValor) {
+        String marcadorEtiqueta = "{{" + tagBuscado + "}}";
+
+        try {
+            Documento doc = repository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Documento no encontrado"));
+
+            if (doc.getArchivo() == null) return;
+
+            // 1. OBTENER EL VALOR ANTIGUO DE LA BASE DE DATOS
+            // Esto nos sirve para buscarlo si la etiqueta {{...}} ya desapareció.
+            String valorAntiguo = null;
+            if (tagBuscado.equalsIgnoreCase("CUANTITATIVO")) {
+                valorAntiguo = doc.getCuantitativo(); // Ej: "0.50"
+            }
+
+            // Evitar trabajar si el valor no cambia
+            if (nuevoValor.equals(valorAntiguo)) {
+                System.out.println("ℹ️ El valor nuevo es igual al actual. No se realizan cambios.");
+                return;
+            }
+
+            try (ByteArrayInputStream bis = new ByteArrayInputStream(doc.getArchivo());
+                 XWPFDocument document = new XWPFDocument(bis);
+                 ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+
+                boolean cambiado = false;
+
+                // --- INTENTO 1: BUSCAR LA ETIQUETA {{TAG}} ---
+                if (buscarYReemplazarEnTodoElDoc(document, marcadorEtiqueta, nuevoValor)) {
+                    cambiado = true;
+                    System.out.println("✅ Se reemplazó la etiqueta original: " + marcadorEtiqueta);
+                }
+                // --- INTENTO 2: SI NO ESTÁ LA ETIQUETA, BUSCAR EL VALOR ANTIGUO ---
+                else if (valorAntiguo != null && !valorAntiguo.isEmpty()) {
+                    System.out.println("⚠️ Etiqueta no encontrada. Buscando valor antiguo: '" + valorAntiguo + "'");
+
+                    // Buscamos textualmente el número viejo (ej: "0.50") y lo cambiamos por el nuevo
+                    if (buscarYReemplazarEnTodoElDoc(document, valorAntiguo, nuevoValor)) {
+                        cambiado = true;
+                        System.out.println("✅ Se actualizó el valor antiguo '" + valorAntiguo + "' por '" + nuevoValor + "'");
+                    }
+                }
+
+                if (cambiado) {
+                    document.write(bos);
+                    doc.setArchivo(bos.toByteArray());
+
+                    // Actualizar DB
+                    if (tagBuscado.equalsIgnoreCase("CUANTITATIVO")) {
+                        doc.setCuantitativo(nuevoValor);
+                    }
+
+                    repository.save(doc);
+                } else {
+                    System.err.println("❌ No se pudo actualizar. No se encontró ni '" + marcadorEtiqueta + "' ni el valor antiguo '" + valorAntiguo + "'");
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Error editando Word: " + e.getMessage());
+        }
+    }
+
+    // 👇 MÉTODO HELPER PARA NO REPETIR CÓDIGO (Busca en Párrafos y Tablas)
+    private boolean buscarYReemplazarEnTodoElDoc(XWPFDocument document, String buscado, String reemplazo) {
+        boolean encontrado = false;
+
+        // 1. Párrafos normales
+        for (XWPFParagraph p : document.getParagraphs()) {
+            if (reemplazarTextoEnParrafo(p, buscado, reemplazo)) encontrado = true;
+        }
+
+        // 2. Tablas
+        for (XWPFTable table : document.getTables()) {
+            for (XWPFTableRow row : table.getRows()) {
+                for (XWPFTableCell cell : row.getTableCells()) {
+                    for (XWPFParagraph p : cell.getParagraphs()) {
+                        if (reemplazarTextoEnParrafo(p, buscado, reemplazo)) encontrado = true;
+                    }
+                }
+            }
+        }
+        return encontrado;
+    }
+
+    // 👇 TU MÉTODO DE REEMPLAZO (Sin cambios, solo reutilizado)
+    private boolean reemplazarTextoEnParrafo(XWPFParagraph p, String marcador, String nuevoValor) {
+        boolean encontrado = false;
+        List<XWPFRun> runs = p.getRuns();
+
+        if (runs != null) {
+            for (XWPFRun r : runs) {
+                String text = r.getText(0);
+                if (text != null && text.contains(marcador)) {
+                    text = text.replace(marcador, nuevoValor);
+                    r.setText(text, 0);
+                    encontrado = true;
+                }
+            }
+        }
+        return encontrado;
+    }
+
+
+    private boolean reemplazarValorEnSDT(XWPFParagraph p, String tagBuscado, String nuevoValor) {
+        boolean encontrado = false;
+
+        // IRunElement representa partes del párrafo (Textos, Negritas, SDTs)
+        for (IRunElement run : p.getIRuns()) {
+            if (run instanceof XWPFSDT) {
+                XWPFSDT sdt = (XWPFSDT) run;
+
+                // Verificamos si el Tag coincide (ignorando mayúsculas/minúsculas)
+                if (sdt.getTag() != null && sdt.getTag().equalsIgnoreCase(tagBuscado)) {
+
+                    try {
+                        // ✅ SOLUCIÓN ROBUSTA: Acceso directo al XML subyacente
+                        // 1. Accedemos al campo privado 'ctSdt' que contiene la estructura XML
+                        java.lang.reflect.Field field = sdt.getClass().getDeclaredField("ctSdt");
+                        field.setAccessible(true);
+                        Object ctSdt = field.get(sdt); // Puede ser CTSdtRun o CTSdtBlock
+
+                        // 2. Obtenemos el contenido (SdtContent)
+                        java.lang.reflect.Method getSdtContent = ctSdt.getClass().getMethod("getSdtContent");
+                        Object sdtContent = getSdtContent.invoke(ctSdt);
+
+                        // 3. Verificamos si es contenido de texto (CTSdtContentRun)
+                        if (sdtContent instanceof org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun) {
+                            org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun xmlContent =
+                                    (org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun) sdtContent;
+
+                            // 4. Limpiamos cualquier texto previo (nodos <w:r>)
+                            int size = xmlContent.sizeOfRArray();
+                            for (int i = size - 1; i >= 0; i--) {
+                                xmlContent.removeR(i);
+                            }
+
+                            // 5. Creamos un nuevo nodo de texto con el valor
+                            xmlContent.addNewR().addNewT().setStringValue(nuevoValor);
+                            encontrado = true;
+                            // System.out.println("✏️ SDT '" + tagBuscado + "' actualizado a: " + nuevoValor);
+                        } else {
+                            System.err.println("⚠️ El tipo de contenido SDT no es compatible para edición directa.");
+                        }
+
+                    } catch (Exception e) {
+                        System.err.println("❌ Error actualizando SDT '" + tagBuscado + "': " + e.getMessage());
+                    }
+                }
+            }
+        }
+        return encontrado;
+    }
+
 }

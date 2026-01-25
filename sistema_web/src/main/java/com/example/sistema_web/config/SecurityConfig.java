@@ -45,7 +45,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/documentos/*/save-callback")
                 .requestMatchers("/api/onlyoffice/**")
                 .requestMatchers("/api/oficio-dosaje/*/download")
-                .requestMatchers("/api/oficio-dosaje/*/callback");
+                .requestMatchers("/api/oficio-dosaje/*/save-callback");
     }
 
     // 👇👇👇 1. DEFINIR LA FUENTE DE CONFIGURACIÓN CORS AQUÍ 👇👇👇
@@ -56,8 +56,7 @@ public class SecurityConfig {
         // Orígenes permitidos: Angular, Docker/OnlyOffice, y tu IP local
         configuration.setAllowedOrigins(Arrays.asList(
                 "http://localhost:4200",
-                "http://localhost:8081",
-                "http://192.168.1.46:4200" // Tu IP por si acaso
+                "http://localhost:8081"
         ));
 
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));

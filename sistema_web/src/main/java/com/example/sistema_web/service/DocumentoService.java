@@ -1,5 +1,4 @@
 package com.example.sistema_web.service;
-
 import com.example.sistema_web.dto.DocumentoDTO;
 import java.util.List;
 
@@ -15,4 +14,5 @@ public interface DocumentoService {
     void uploadDocumento(Long id, byte[] archivoBytes);
     Long crearDocumentoVacio();
     void actualizarCampoEnWord(Long id, String tag, String valor);
+    void actualizarTagEnWord(Long id, String tagBuscado, String nuevoValor);
 }

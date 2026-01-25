@@ -1,7 +1,8 @@
 // src/main/java/com/example/sistema_web/config/JwtAuthFilter.java
 package com.example.sistema_web.config;
-
 import com.example.sistema_web.model.Empleado;
+import com.example.sistema_web.model.Documento;
+import com.example.sistema_web.service.DocumentoService;
 import com.example.sistema_web.service.EmpleadoService;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -24,14 +25,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     @Autowired
     private EmpleadoService empleadoService;
+    private DocumentoService documentoService;
 
     // ✅ Email del superusuario (excepción)
     private static final String ADMIN_EMAIL = "admin@gmail.com";
-
     private static final ThreadLocal<Long> CURRENT_EMPLEADO_ID = new ThreadLocal<>();
+    private static final ThreadLocal<Long> CURRENT_DOCUMENTO_ID = new ThreadLocal<>();
 
     public static Long getCurrentEmpleadoId() {
         return CURRENT_EMPLEADO_ID.get();
+    }
+    public static Long getCurrentDocumentoId() {
+        return CURRENT_DOCUMENTO_ID.get();
     }
 
     @Override
