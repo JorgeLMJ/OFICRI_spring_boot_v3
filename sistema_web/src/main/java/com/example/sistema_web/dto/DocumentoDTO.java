@@ -7,9 +7,10 @@ public class DocumentoDTO {
     private Long id;
     private String nombresyapellidos;
     private String dni;
+    private String edad;
     private String cualitativo;
     private String cuantitativo;
-    private String numeroDocumento;
+    private String numeroInforme;
     private String nombreOficio;
     private String procedencia;
     private String tipoMuestra;

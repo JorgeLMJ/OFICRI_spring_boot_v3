@@ -40,6 +40,7 @@ public class OficioDosajeController {
             return ResponseEntity.notFound().build();
         }
 
+
         Map<String, Object> config = new HashMap<>();
         config.put("documentType", "word");
         config.put("width", "100%");
@@ -155,18 +156,15 @@ public class OficioDosajeController {
         return ResponseEntity.ok(service.obtenerPorId(id));
     }
 
-    @PostMapping("/{id}/actualizar-tag")
-    public ResponseEntity<?> actualizarTag(
-            @PathVariable Long id,
-            @RequestBody Map<String, String> payload) {
 
-        String tag = payload.get("tag");   // Ej: "FECHA"
-        String valor = payload.get("valor"); // Ej: "01/10/2025"
-
-        service.actualizarTagEnWord(id, tag, valor);
-
-        return ResponseEntity.ok(Map.of("mensaje", "Word actualizado correctamente"));
+    @PutMapping("/{id}")
+    public ResponseEntity<OficioDosajeDTO> actualizar(@PathVariable Long id, @RequestBody OficioDosajeDTO dto) {
+        return ResponseEntity.ok(service.actualizar(id, dto));
     }
-
-
+    @PostMapping("/{id}/sincronizar")
+    public ResponseEntity<?> sincronizar(@PathVariable Long id) {
+        System.out.println("🔄 Solicitud de sincronización recibida para ID: " + id);
+        service.sincronizarDatosAlWord(id);
+        return ResponseEntity.ok(Map.of("mensaje", "Sincronización completada"));
+    }
 }

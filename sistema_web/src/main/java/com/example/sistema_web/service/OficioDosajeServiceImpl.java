@@ -4,6 +4,10 @@ import com.example.sistema_web.model.OficioDosaje;
 import com.example.sistema_web.model.Documento;
 import com.example.sistema_web.repository.DocumentoRepository;
 import com.example.sistema_web.repository.OficioDosajeRepository;
+import fr.opensagres.xdocreport.document.IXDocReport;
+import fr.opensagres.xdocreport.document.registry.XDocReportRegistry;
+import fr.opensagres.xdocreport.template.IContext;
+import fr.opensagres.xdocreport.template.TemplateEngineKind;
 import lombok.RequiredArgsConstructor;
 import org.apache.poi.xwpf.usermodel.*;
 import org.springframework.core.io.ClassPathResource;
@@ -12,11 +16,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -84,11 +93,12 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
                 if (documento != null) oficio.setDocumento(documento);
             }
             // ⛔ COMENTAMOS ESTA LÍNEA para que no intente leer nada del Word
-            extraerMetadatosDelWord(archivoBytes, oficio);
+            //extraerMetadatosDelWord(archivoBytes, oficio);
 
             // Guardamos los cambios (el archivo blob) en la BD
             repository.save(oficio);
             System.out.println("✅ ¡ARCHIVO GUARDADO! (Sin extracción de metadatos)");
+            System.out.println("✅ actualizarCampoEnWord¡ARCHIVO GUARDADO! (Sin extracción de metadatos)");
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -96,84 +106,28 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
         }
     }
 
-    private void extraerMetadatosDelWord(byte[] archivo, OficioDosaje oficio) {
-
-        // 2. Creamos el flujo de lectura (esto corrige el error 'cannot find symbol bis')
-        ByteArrayInputStream bis = new ByteArrayInputStream(archivo);
-
-        try (XWPFDocument document = new XWPFDocument(bis)) {
-
-            // A. LEER PÁRRAFOS SUELTOS
-            for (XWPFParagraph paragraph : document.getParagraphs()) {
-                procesarParrafo(paragraph, oficio);
-            }
-            // B. LEER DENTRO DE LAS TABLAS (Aquí estaba el error)
-            if (document.getTables() != null) {
-                for (XWPFTable table : document.getTables()) {
-                    for (XWPFTableRow row : table.getRows()) {
-                        for (XWPFTableCell cell : row.getTableCells()) {
-
-                            for (XWPFParagraph paragraph : cell.getParagraphs()) {
-                                procesarParrafo(paragraph, oficio);
-                            }
-                        }
-                    }
-                }
-            }
-
-        } catch (IOException e) {
-            System.err.println("⚠️ Error leyendo el Word para extracción: " + e.getMessage());
-        }
-    }
-
-    private void procesarParrafo(XWPFParagraph paragraph, OficioDosaje oficio) {
-        String textoCompleto = paragraph.getText();
-        if (textoCompleto != null && !textoCompleto.isEmpty()) {
-            System.out.println("📝 TEXTO ENCONTRADO EN WORD: " + textoCompleto);
-        }
-
-        if (paragraph.getIRuns() != null) {
-            for (IRunElement run : paragraph.getIRuns()) {
-                // 2. Verificar si es un Control de Contenido (SDT)
-                if (run instanceof XWPFSDT) {
-                    XWPFSDT sdt = (XWPFSDT) run;
-                    String tag = sdt.getTag();
-                    String text = sdt.getContent().getText();
-
-                    System.out.println("   👉 CONTROL DETECTADO:");
-                    System.out.println("      - Tag (Etiqueta): " + (tag == null ? "NULL (¡AQUÍ ESTÁ EL ERROR!)" : "'" + tag + "'"));
-                    System.out.println("      - Contenido: " + text);
-
-                    if (tag != null && text != null && !text.trim().isEmpty()) {
-                        asignarValor(oficio, tag, text.trim());
-                    }
-                }
-                // 3. Verificar si es un texto normal (no control)
-                else if (run instanceof XWPFRun) {
-                }
-            }
-        }
-    }
-
-    private void asignarValor(OficioDosaje oficio, String tag, String valor) {
-        System.out.println("   🔍 Dato encontrado -> Tag: " + tag + " | Valor: " + valor);
-        switch (tag.toUpperCase()) {
-            case "FECHA": oficio.setFecha(valor); break;
-            case "NROOFICIO": oficio.setNro_oficio(valor); break;
-            case "GRADOPNP": oficio.setGradoPNP(valor); break;
-            case "NOMBRESYAPELLIDOSPNP": oficio.setNombresyapellidosPNP(valor); break;
-            case "REFERENCIA": oficio.setReferencia(valor); break;
-            case "NROINFORME": oficio.setNro_informe(valor); break;
-            default: break;
-        }
-    }
 
 // --- MÉTODOS CRUD ESTÁNDAR ---
-    @Override
-    public OficioDosajeDTO crear(OficioDosajeDTO dto) {
-        OficioDosaje oficio = mapToEntity(dto);
-        OficioDosaje saved = repository.save(oficio);
-        return mapToDTO(saved);
+@Override
+@Transactional
+public OficioDosajeDTO crear(OficioDosajeDTO dto) {
+    OficioDosaje oficio = mapToEntity(dto);
+
+    // 1. Cargar la plantilla base desde resources
+    byte[] plantillaBase = cargarPlantillaDesdeResources();
+    oficio.setArchivo(plantillaBase);
+
+    OficioDosaje saved = repository.save(oficio);
+    return mapToDTO(saved);
+}
+
+    private byte[] cargarPlantillaDesdeResources() {
+        try {
+            Resource resource = new ClassPathResource("templates/oficio_dosaje.docx");
+            return resource.getInputStream().readAllBytes();
+        } catch (IOException e) {
+            throw new RuntimeException("Error al leer la plantilla de oficio", e);
+        }
     }
 
     @Override
@@ -196,8 +150,7 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
         oficio.setNro_oficio(dto.getNro_oficio());
         oficio.setGradoPNP(dto.getGradoPNP());
         oficio.setNombresyapellidosPNP(dto.getNombresyapellidosPNP());
-        oficio.setReferencia(dto.getReferencia());
-        oficio.setNro_informe(dto.getNro_informe());
+        oficio.setNro_informe_referencia(dto.getNro_informe_referencia());
         oficio.setArchivo(dto.getArchivo());
         if (dto.getDocumentoId() != null) {
             var documento = documentoRepository.findById(dto.getDocumentoId())
@@ -231,10 +184,20 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
         dto.setNro_oficio(oficio.getNro_oficio());
         dto.setGradoPNP(oficio.getGradoPNP());
         dto.setNombresyapellidosPNP(oficio.getNombresyapellidosPNP());
-        dto.setReferencia(oficio.getReferencia());
-        dto.setNro_informe(oficio.getNro_informe());
+        dto.setNro_informe_referencia(oficio.getNro_informe_referencia());
         dto.setArchivo(oficio.getArchivo());
-        dto.setDocumentoId(oficio.getDocumento() != null ? oficio.getDocumento().getId() : null);
+
+       // dto.setDocumentoId(oficio.getDocumento() != null ? oficio.getDocumento().getId() : null);
+       // return dto;
+        if (oficio.getDocumento() != null) {
+            dto.setDocumentoId(oficio.getDocumento().getId());
+            dto.setPersonaInvolucrada(oficio.getDocumento().getNombresyapellidos());
+            dto.setDniInvolucrado(oficio.getDocumento().getDni());
+            dto.setEdadInvolucrado(oficio.getDocumento().getEdad());
+            dto.setTipoMuestra(oficio.getDocumento().getTipoMuestra());
+            dto.setNroInformeBase(oficio.getDocumento().getNumeroInforme());
+
+        }
         return dto;
         }
 
@@ -244,8 +207,7 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
                 .nro_oficio(dto.getNro_oficio())
                 .gradoPNP(dto.getGradoPNP())
                 .nombresyapellidosPNP(dto.getNombresyapellidosPNP())
-                .referencia(dto.getReferencia())
-                .nro_informe(dto.getNro_informe())
+                .nro_informe_referencia(dto.getNro_informe_referencia())
                 .archivo(dto.getArchivo());
 
         if (dto.getDocumentoId() != null) {
@@ -255,253 +217,72 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
         return builder.build();
     }
 
-    // ✅ 5. ACTUALIZAR CAMPOS DENTRO DEL WORD (Sincronización inversa BD -> Word)
-    @Override
-    @Transactional
-    public void actualizarCampoEnWord(Long id, String tag, String valor) {
-        try {
-            OficioDosaje oficio = repository.findById(id).orElseThrow();
-            if (oficio.getArchivo() == null) return;
-
-            try (ByteArrayInputStream bis = new ByteArrayInputStream(oficio.getArchivo());
-                 XWPFDocument document = new XWPFDocument(bis);
-                 ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-
-                boolean cambiado = false;
-
-                // Buscar en párrafos
-                for (XWPFParagraph p : document.getParagraphs()) {
-                    if (reemplazarEnParrafo(p, tag, valor)) cambiado = true;
-                }
-
-                // Buscar en tablas
-                for (XWPFTable tbl : document.getTables()) {
-                    for (XWPFTableRow row : tbl.getRows()) {
-                        for (XWPFTableCell cell : row.getTableCells()) {
-                            for (XWPFParagraph p : cell.getParagraphs()) {
-                                if (reemplazarEnParrafo(p, tag, valor)) cambiado = true;
-                            }
-                        }
-                    }
-                }
-
-                if (cambiado) {
-                    document.write(bos);
-                    oficio.setArchivo(bos.toByteArray());
-                    repository.save(oficio);
-                    System.out.println("📝 [OFICIO] Campo '" + tag + "' actualizado en el Word.");
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("⚠️ Error actualizando campo en Word: " + e.getMessage());
-        }
-    }
-
-    private boolean reemplazarEnParrafo(XWPFParagraph p, String tagBuscado, String nuevoValor) {
-        boolean encontrado = false;
-
-        for (IRunElement run : p.getIRuns()) {
-            if (run instanceof XWPFSDT) {
-                XWPFSDT sdt = (XWPFSDT) run;
-
-                if (sdt.getTag() != null && sdt.getTag().equalsIgnoreCase(tagBuscado)) {
-                    try {
-                        // ✅ SOLUCIÓN DEFINITIVA MEDIANTE REFLEXIÓN
-                        // Accedemos al campo privado 'ctSdt' que contiene el XML
-                        java.lang.reflect.Field field = sdt.getClass().getDeclaredField("ctSdt");
-                        field.setAccessible(true);
-                        Object ctSdt = field.get(sdt);
-
-                        // El objeto ctSdt suele ser CTSdtRun o CTSdtBlock
-                        // Usamos reflexión para obtener el SdtContent
-                        java.lang.reflect.Method getSdtContent = ctSdt.getClass().getMethod("getSdtContent");
-                        Object sdtContent = getSdtContent.invoke(ctSdt);
-
-                        // Obtenemos el objeto CTSdtContentRun para manipular los nodos de texto
-                        if (sdtContent instanceof org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun) {
-                            org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun xmlContent =
-                                    (org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun) sdtContent;
-
-                            // 1. Limpiamos cualquier texto previo (nodos <w:r>)
-                            int size = xmlContent.sizeOfRArray();
-                            for (int i = size - 1; i >= 0; i--) {
-                                xmlContent.removeR(i);
-                            }
-
-                            // 2. Creamos un nuevo nodo de texto con el valor
-                            xmlContent.addNewR().addNewT().setStringValue(nuevoValor);
-                            encontrado = true;
-                            System.out.println("✏️ Campo SDT '" + tagBuscado + "' actualizado mediante reflexión a: " + nuevoValor);
-                        }
-
-                    } catch (Exception e) {
-                        // 🛠️ SEGUNDO INTENTO: Si la reflexión falla, intentamos mediante la interfaz de contenido
-                        try {
-                            sdt.getContent().getText(); // Solo para verificar acceso
-                            // Si tu versión de POI lo permite, se puede intentar manipular los párrafos internos de sdt.getContent()
-                            System.err.println("⚠️ Falló reflexión, intentando vía alternativa...");
-                        } catch (Exception e2) {
-                            System.err.println("❌ Error total actualizando el Word: " + e.getMessage());
-                        }
-                    }
-                }
-            }
-        }
-        return encontrado;
-    }
 
     @Override
     @Transactional
-    public void actualizarTagEnWord(Long id, String tagBuscado, String nuevoValor) {
-        String marcadorEtiqueta = "{{" + tagBuscado + "}}";
+    public void sincronizarDatosAlWord(Long id) {
+        OficioDosaje oficio = repository.findById(id).orElseThrow();
+        Documento docBase = oficio.getDocumento();
 
         try {
-            OficioDosaje oficio = repository.findById(id)
-                    .orElseThrow(() -> new RuntimeException("Oficio no encontrado"));
-
-            if (oficio.getArchivo() == null) return;
-
-            // 1. OBTENER EL VALOR ANTIGUO DE LA BASE DE DATOS
-            // Esto nos sirve para buscarlo si la etiqueta {{...}} ya desapareció.
-            String valorAntiguo = null;
-            if (tagBuscado.equalsIgnoreCase("FECHA")) {
-                valorAntiguo = oficio.getFecha(); // Ej: "02/12/2025"
+            // 1. DETERMINAR LA FUENTE DEL DOCUMENTO
+            InputStream in;
+            if (oficio.getArchivo() != null && oficio.getArchivo().length > 0) {
+                // Si el usuario ya editó el Word, usamos su versión actual para no perder cambios
+                in = new ByteArrayInputStream(oficio.getArchivo());
+            } else {
+                // Si es la primera vez, usamos la plantilla de resources
+                in = new ClassPathResource("templates/oficio_dosaje.docx").getInputStream();
             }
 
-            // Evitar trabajar si el valor no cambia
-            if (nuevoValor.equals(valorAntiguo)) {
-                System.out.println("ℹ️ El valor nuevo es igual al actual. No se realizan cambios.");
-                return;
+            IXDocReport report = XDocReportRegistry.getRegistry().loadReport(in, TemplateEngineKind.Velocity);
+            IContext context = report.createContext();
+
+            // 2. INYECTAR DATOS (Esto solo reemplazará los $placeholders que sigan existiendo)
+            String fechaFormateada = formatearFechaLarga(oficio.getFecha());
+            context.put("f_fecha", fechaFormateada);
+            context.put("f_oficio", safeString(oficio.getNro_oficio()));
+            context.put("f_grado", safeString(oficio.getGradoPNP()));
+            context.put("f_responsablePNP", safeString(oficio.getNombresyapellidosPNP()));
+            context.put("f_nro_informe_referencia", safeString(oficio.getNro_informe_referencia()));
+
+            if (docBase != null) {
+                context.put("d_nombre", safeString(docBase.getNombresyapellidos()));
+                context.put("d_dni", safeString(docBase.getDni()));
+                context.put("d_edad", safeString(docBase.getEdad()));
+                context.put("d_muestra", safeString(docBase.getTipoMuestra()));
+                context.put("d_informe", safeString(docBase.getNumeroInforme()));
             }
 
-            try (ByteArrayInputStream bis = new ByteArrayInputStream(oficio.getArchivo());
-                 XWPFDocument document = new XWPFDocument(bis);
-                 ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            // 3. GENERAR Y GUARDAR
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            report.process(context, out);
 
-                boolean cambiado = false;
+            oficio.setArchivo(out.toByteArray());
+            repository.save(oficio);
+            System.out.println("✅ Sincronización exitosa preservando cambios manuales.");
 
-                // --- INTENTO 1: BUSCAR LA ETIQUETA {{TAG}} ---
-                if (buscarYReemplazarEnTodoElOficio(document, marcadorEtiqueta, nuevoValor)) {
-                    cambiado = true;
-                    System.out.println("✅ Se reemplazó la etiqueta original: " + marcadorEtiqueta);
-                }
-                // --- INTENTO 2: SI NO ESTÁ LA ETIQUETA, BUSCAR EL VALOR ANTIGUO ---
-                else if (valorAntiguo != null && !valorAntiguo.isEmpty()) {
-                    System.out.println("⚠️ Etiqueta no encontrada. Buscando valor antiguo: '" + valorAntiguo + "'");
-
-                    // Buscamos textualmente el número viejo (ej: "0.50") y lo cambiamos por el nuevo
-                    if (buscarYReemplazarEnTodoElOficio(document, valorAntiguo, nuevoValor)) {
-                        cambiado = true;
-                        System.out.println("✅ Se actualizó el valor antiguo '" + valorAntiguo + "' por '" + nuevoValor + "'");
-                    }
-                }
-
-                if (cambiado) {
-                    document.write(bos);
-                    oficio.setArchivo(bos.toByteArray());
-
-                    // Actualizar DB
-                    if (tagBuscado.equalsIgnoreCase("FECHA")) {
-                        oficio.setFecha(nuevoValor);
-                    }
-
-                    repository.save(oficio);
-                } else {
-                    System.err.println("❌ No se pudo actualizar. No se encontró ni '" + marcadorEtiqueta + "' ni el valor antiguo '" + valorAntiguo + "'");
-                }
-            }
         } catch (Exception e) {
-            throw new RuntimeException("Error editando Word: " + e.getMessage());
+            throw new RuntimeException("Error en sincronización: " + e.getMessage());
         }
     }
 
-    private boolean buscarYReemplazarEnTodoElOficio(XWPFDocument document, String buscado, String reemplazo) {
-        boolean encontrado = false;
-
-        // 1. Párrafos normales
-        for (XWPFParagraph p : document.getParagraphs()) {
-            if (reemplazarTextoEnParrafo(p, buscado, reemplazo)) encontrado = true;
-        }
-
-        // 2. Tablas
-        for (XWPFTable table : document.getTables()) {
-            for (XWPFTableRow row : table.getRows()) {
-                for (XWPFTableCell cell : row.getTableCells()) {
-                    for (XWPFParagraph p : cell.getParagraphs()) {
-                        if (reemplazarTextoEnParrafo(p, buscado, reemplazo)) encontrado = true;
-                    }
-                }
-            }
-        }
-        return encontrado;
-    }
-    // METODO DE REEMPLAZO (Sin cambios, solo reutilizado)
-    private boolean reemplazarTextoEnParrafo(XWPFParagraph p, String marcador, String nuevoValor) {
-        boolean encontrado = false;
-        List<XWPFRun> runs = p.getRuns();
-
-        if (runs != null) {
-            for (XWPFRun r : runs) {
-                String text = r.getText(0);
-                if (text != null && text.contains(marcador)) {
-                    text = text.replace(marcador, nuevoValor);
-                    r.setText(text, 0);
-                    encontrado = true;
-                }
-            }
-        }
-        return encontrado;
-    }
-    private boolean reemplazarValorEnSDT(XWPFParagraph p, String tagBuscado, String nuevoValor) {
-        boolean encontrado = false;
-
-        // IRunElement representa partes del párrafo (Textos, Negritas, SDTs)
-        for (IRunElement run : p.getIRuns()) {
-            if (run instanceof XWPFSDT) {
-                XWPFSDT sdt = (XWPFSDT) run;
-
-                // Verificamos si el Tag coincide (ignorando mayúsculas/minúsculas)
-                if (sdt.getTag() != null && sdt.getTag().equalsIgnoreCase(tagBuscado)) {
-
-                    try {
-                        // ✅ SOLUCIÓN ROBUSTA: Acceso directo al XML subyacente
-                        // 1. Accedemos al campo privado 'ctSdt' que contiene la estructura XML
-                        java.lang.reflect.Field field = sdt.getClass().getDeclaredField("ctSdt");
-                        field.setAccessible(true);
-                        Object ctSdt = field.get(sdt); // Puede ser CTSdtRun o CTSdtBlock
-
-                        // 2. Obtenemos el contenido (SdtContent)
-                        java.lang.reflect.Method getSdtContent = ctSdt.getClass().getMethod("getSdtContent");
-                        Object sdtContent = getSdtContent.invoke(ctSdt);
-
-                        // 3. Verificamos si es contenido de texto (CTSdtContentRun)
-                        if (sdtContent instanceof org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun) {
-                            org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun xmlContent =
-                                    (org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun) sdtContent;
-
-                            // 4. Limpiamos cualquier texto previo (nodos <w:r>)
-                            int size = xmlContent.sizeOfRArray();
-                            for (int i = size - 1; i >= 0; i--) {
-                                xmlContent.removeR(i);
-                            }
-
-                            // 5. Creamos un nuevo nodo de texto con el valor
-                            xmlContent.addNewR().addNewT().setStringValue(nuevoValor);
-                            encontrado = true;
-                            // System.out.println("✏️ SDT '" + tagBuscado + "' actualizado a: " + nuevoValor);
-                        } else {
-                            System.err.println("⚠️ El tipo de contenido SDT no es compatible para edición directa.");
-                        }
-
-                    } catch (Exception e) {
-                        System.err.println("❌ Error actualizando SDT '" + tagBuscado + "': " + e.getMessage());
-                    }
-                }
-            }
-        }
-        return encontrado;
+    private String safeString(Object val) {
+        return (val == null) ? " " : String.valueOf(val);
     }
 
-
+    private String formatearFechaLarga(String fechaIso) {
+        if (fechaIso == null || fechaIso.trim().isEmpty()) {
+            return " ";
+        }
+        try {
+            // Asumiendo que llega como "2026-01-26" desde el input date
+            LocalDate fecha = LocalDate.parse(fechaIso);
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("d 'de' MMMM 'del' yyyy", new Locale("es", "ES"));
+            return fecha.format(formatter);
+        } catch (Exception e) {
+            return fechaIso; // Si falla, devuelve el original para no romper el flujo
+        }
+    }
 }
 

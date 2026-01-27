@@ -6,10 +6,12 @@ import lombok.*;
 
 @Entity
 @Table(name = "oficio_dosaje")
-@Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Getter
+@Setter
+@ToString(exclude = "documento")
 public class OficioDosaje {
 
     @Id
@@ -19,13 +21,12 @@ public class OficioDosaje {
     private String nro_oficio;
     private String gradoPNP;
     private String nombresyapellidosPNP;
-    private String referencia;
-    private String nro_informe;
+    private String nro_informe_referencia;
     @Lob
     @Column(name = "archivo", columnDefinition = "LONGBLOB")
     private byte[] archivo;
     // Relación con Documento
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "documento_id", nullable = false)
     private Documento documento;
 }

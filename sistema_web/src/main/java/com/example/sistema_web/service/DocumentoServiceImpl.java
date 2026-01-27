@@ -101,9 +101,6 @@ public class DocumentoServiceImpl implements DocumentoService {
     }
 
     // --- MÉTODOS PRIVADOS DE EXTRACCIÓN (APACHE POI) ---
-    // --- MÉTODOS PRIVADOS DE EXTRACCIÓN (APACHE POI) ---
-    // --- MÉTODOS PRIVADOS DE EXTRACCIÓN (APACHE POI) ---
-    // --- MÉTODOS PRIVADOS DE EXTRACCIÓN (APACHE POI) ---
     private void extraerMetadatosDelWord(byte[] archivo, Documento doc) { // 1. Aquí recibes 'doc'
 
         // 2. Creamos el flujo de lectura (esto corrige el error 'cannot find symbol bis')
@@ -178,8 +175,9 @@ public class DocumentoServiceImpl implements DocumentoService {
         switch (tag.toUpperCase()) {
             case "NOMBRESYAPELLIDOS": doc.setNombresyapellidos(valor); break;
             case "DNI": doc.setDni(valor); break;
+            case "EDAD": doc.setEdad(valor); break;
             case "NOMBREOFICIO": doc.setNombreOficio(valor); break;
-            case "NUMERODOCUMENTO": doc.setNumeroDocumento(valor); break;
+            case "NUMERODOCUMENTO": doc.setNumeroInforme(valor); break;
             case "PROCEDENCIA": doc.setProcedencia(valor); break;
             case "TIPOMUESTRA": doc.setTipoMuestra(valor); break;
             case "PERSONAQUECONDUCE": doc.setPersonaQueConduce(valor); break;
@@ -216,9 +214,10 @@ public class DocumentoServiceImpl implements DocumentoService {
 
         doc.setNombresyapellidos(dto.getNombresyapellidos());
         doc.setDni(dto.getDni());
+        doc.setEdad(dto.getEdad());
         doc.setCualitativo(dto.getCualitativo());
         doc.setCuantitativo(dto.getCuantitativo());
-        doc.setNumeroDocumento(dto.getNumeroDocumento());
+        doc.setNumeroInforme(dto.getNumeroInforme());
         doc.setNombreOficio(dto.getNombreOficio());
         doc.setProcedencia(dto.getProcedencia());
         doc.setTipoMuestra(dto.getTipoMuestra());
@@ -254,9 +253,10 @@ public class DocumentoServiceImpl implements DocumentoService {
         dto.setId(doc.getId());
         dto.setNombresyapellidos(doc.getNombresyapellidos());
         dto.setDni(doc.getDni());
+        dto.setEdad(doc.getEdad());
         dto.setCualitativo(doc.getCualitativo());
         dto.setCuantitativo(doc.getCuantitativo());
-        dto.setNumeroDocumento(doc.getNumeroDocumento());
+        dto.setNumeroInforme(doc.getNumeroInforme());
         dto.setNombreOficio(doc.getNombreOficio());
         dto.setProcedencia(doc.getProcedencia());
         dto.setTipoMuestra(doc.getTipoMuestra());
@@ -270,9 +270,10 @@ public class DocumentoServiceImpl implements DocumentoService {
         Documento.DocumentoBuilder builder = Documento.builder()
                 .nombresyapellidos(dto.getNombresyapellidos())
                 .dni(dto.getDni())
+                .edad(dto.getEdad())
                 .cualitativo(dto.getCualitativo())
                 .cuantitativo(dto.getCuantitativo())
-                .numeroDocumento(dto.getNumeroDocumento())
+                .numeroInforme(dto.getNumeroInforme())
                 .nombreOficio(dto.getNombreOficio())
                 .procedencia(dto.getProcedencia())
                 .tipoMuestra(dto.getTipoMuestra())

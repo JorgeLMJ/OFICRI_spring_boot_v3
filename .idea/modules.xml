@@ -2,7 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/sistema_web.iml" filepath="$PROJECT_DIR$/.idea/sistema_web.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/OFICRI_spring_boot-main_v3.iml" filepath="$PROJECT_DIR$/.idea/OFICRI_spring_boot-main_v3.iml" />
+      <module fileurl="file://$PROJECT_DIR$/sistema_web/sistema_web.iml" filepath="$PROJECT_DIR$/sistema_web/sistema_web.iml" />
     </modules>
   </component>
 </project>

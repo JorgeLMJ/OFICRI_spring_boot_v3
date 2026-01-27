@@ -13,6 +13,5 @@ public interface OficioDosajeService {
     boolean existeOficioDosaje(Long id);
     void uploadOficioDosaje(Long id, byte[] archivoBytes);
     Long crearOficioDosajeVacio();
-    void actualizarCampoEnWord(Long id, String tag, String valor);
-    void actualizarTagEnWord(Long id, String tagBuscado, String nuevoValor);
+    void sincronizarDatosAlWord(Long id);
 }
