@@ -74,33 +74,38 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
     @Override
     @Transactional
     public void actualizarDesdeUrlOnlyOffice(Long id, String urlDescarga, Long documentoId) {
-        try {
-            System.out.println("⬇️ Iniciando descarga para Doc ID: " + id);
+        // 🚩 CLAVE: OnlyOffice envía 'localhost', pero desde el contenedor de Spring
+        // debemos usar el nombre del servicio 'onlyoffice_server' para poder descargar.
+        if (urlDescarga.contains("localhost")) {
+            urlDescarga = urlDescarga.replace("localhost", "onlyoffice_server");
+        }
 
+        System.out.println("⬇️ Descargando cambios del Oficio desde OnlyOffice: " + urlDescarga);
+        try {
             java.net.URL url = new java.net.URL(urlDescarga);
             byte[] archivoBytes;
-            try (java.io.InputStream in = url.openStream()) {
+
+            // Usar HttpURLConnection es más seguro para flujos de red en Docker
+            java.net.HttpURLConnection connection = (java.net.HttpURLConnection) url.openConnection();
+            try (java.io.InputStream in = connection.getInputStream()) {
                 archivoBytes = in.readAllBytes();
             }
 
             OficioDosaje oficio = repository.findById(id).orElseThrow(() ->
-                    new RuntimeException("Documento no encontrado con ID: " + id)
+                    new RuntimeException("Oficio no encontrado con ID: " + id)
             );
-            // ✅ ESTO ES LO ÚNICO IMPORTANTE: Guardar el archivo en la entidad
-            oficio.setArchivo(archivoBytes);
-            if (documentoId != null) {
-                Documento documento = documentoRepository.findById(documentoId).orElse(null);
-                if (documento != null) oficio.setDocumento(documento);
-            }
-            // ⛔ COMENTAMOS ESTA LÍNEA para que no intente leer nada del Word
-            //extraerMetadatosDelWord(archivoBytes, oficio);
 
-            // Guardamos los cambios (el archivo blob) en la BD
+            oficio.setArchivo(archivoBytes);
+
+            if (documentoId != null) {
+                documentoRepository.findById(documentoId).ifPresent(oficio::setDocumento);
+            }
+
             repository.save(oficio);
-            System.out.println("✅ ¡ARCHIVO GUARDADO! (Sin extracción de metadatos)");
-            System.out.println("✅ actualizarCampoEnWord¡ARCHIVO GUARDADO! (Sin extracción de metadatos)");
+            System.out.println("✅ ¡OFICIO GUARDADO EN MYSQL! Tamaño: " + archivoBytes.length + " bytes.");
 
         } catch (Exception e) {
+            System.err.println("❌ ERROR AL GUARDAR OFICIO: " + e.getMessage());
             e.printStackTrace();
             throw new RuntimeException("Error al guardar archivo: " + e.getMessage(), e);
         }

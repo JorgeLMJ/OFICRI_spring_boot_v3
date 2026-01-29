@@ -23,6 +23,6 @@ public class AsignacionDosaje {
     private Documento documento;
 
     @ManyToOne
-    @JoinColumn(name = "empleado_id") // ✅ debe existir
+    @JoinColumn(name = "empleado_id")
     private Empleado empleado;
 }

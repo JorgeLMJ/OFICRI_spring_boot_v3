@@ -12,7 +12,8 @@ public interface DocumentoService {
     void actualizarDesdeUrlOnlyOffice(Long id, String urlDescarga, Long empleadoId);
     boolean existeDocumento(Long id);
     void uploadDocumento(Long id, byte[] archivoBytes);
-    Long crearDocumentoVacio();
+    Long crearDocumentoVacio(Long empleadoId);
     void actualizarCampoEnWord(Long id, String tag, String valor);
     void actualizarTagEnWord(Long id, String tagBuscado, String nuevoValor);
+    String obtenerNombreSugerido(Long id);
 }

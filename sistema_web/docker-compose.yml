@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  spring-app2:
+    image: spring-app
+    container_name: spring-boot-container
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    networks:
+      - spring-network
+    # 🚩 PERMITE QUE SPRING ENCUENTRE AL SERVIDOR DE DOCUMENTOS
+    extra_hosts:
+      - "onlyoffice_server:host-gateway"
+    depends_on:
+      - mysql
+      - onlyoffice
+
+  mysql:
+    image: mysql:latest
+    container_name: mysql_database
+    command: --max_allowed_packet=64M
+    environment:
+      MYSQL_ROOT_PASSWORD: 2026
+      MYSQL_DATABASE: login
+      MYSQL_USER: dosaje
+      MYSQL_PASSWORD: admin
+    ports:
+      - "3307:3306"
+    networks:
+      - spring-network
+    volumes:
+      - mysql-volume:/var/lib/mysql
+
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: onlyoffice_server
+    user: root
+    ports:
+      - "8081:80"
+    networks:
+      - spring-network
+    # 🚩 PERMITE QUE ONLYOFFICE ENCUENTRE EL BACKEND DE SPRING
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - JWT_ENABLED=true
+      - JWT_SECRET=aCm6COwjjJhSayYMnqua8iBPKtvSGBHd
+      - JWT_HEADER=Authorization
+      - JWT_IN_BODY=true
+      - USE_UNAUTHORIZED_STORAGE=true
+    restart: always
+
+networks:
+  spring-network:
+
+volumes:
+  mysql-volume:

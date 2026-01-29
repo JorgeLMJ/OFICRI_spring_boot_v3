@@ -3,6 +3,8 @@ package com.example.sistema_web.controller;
 import com.example.sistema_web.config.JwtAuthFilter;
 import com.example.sistema_web.dto.DocumentoDTO;
 import com.example.sistema_web.service.DocumentoService;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
@@ -22,58 +24,76 @@ import java.util.Map;
 public class DocumentoController {
 
     private final DocumentoService service;
-    private static final String DOCKER_HOST = "host.docker.internal";
+    //private static final String DOCKER_HOST = "host.docker.internal";
 
     // ✅ 1. CREAR NUEVO (Único punto de entrada para crear ID)
+    // ✅ 1. CREAR NUEVO (Asignando el empleado de inmediato)
     @PostMapping("/nuevo")
     public ResponseEntity<Long> iniciarNuevoDocumento() {
-        Long nuevoId = service.crearDocumentoVacio();
-        System.out.println("🆕 Nuevo documento creado con ID: " + nuevoId);
+        // Obtenemos el ID del empleado que tiene la sesión activa
+        Long empleadoIdActual = JwtAuthFilter.getCurrentEmpleadoId(); //
+
+        // Pasamos el ID al servicio para que el documento no sea "huérfano"
+        Long nuevoId = service.crearDocumentoVacio(empleadoIdActual);
+
+        System.out.println("🆕 Documento " + nuevoId + " creado por Empleado ID: " + empleadoIdActual);
         return ResponseEntity.ok(nuevoId);
     }
 
-    // ✅ 2. CONFIG EDITOR (Con validación, SIN crear basura)
+    // ✅ 2. CONFIG EDITOR (Corregido: Se restauró la variable editorConfig)
     @GetMapping("/{id}/editor-config")
     public ResponseEntity<Map<String, Object>> getEditorConfig(
             @PathVariable Long id,
             @RequestParam(defaultValue = "edit") String mode) {
 
-        // 🚨 VALIDACIÓN: Si el ID no existe, devolvemos 404
         if (!service.existeDocumento(id)) {
             System.out.println("⛔ Intento de acceso a ID inexistente: " + id);
             return ResponseEntity.notFound().build();
         }
 
-        // Si existe, procedemos a configurar el editor
+        // 1. Obtener nombre dinámico y ID del empleado actual
+        String nombreArchivo = service.obtenerNombreSugerido(id);
         Long empleadoIdActual = JwtAuthFilter.getCurrentEmpleadoId();
 
+        // 2. Configuración del Objeto Document
         Map<String, Object> config = new HashMap<>();
         config.put("documentType", "word");
 
         Map<String, Object> document = new HashMap<>();
         document.put("fileType", "docx");
         document.put("key", "doc-" + id + "-" + System.currentTimeMillis());
-        document.put("title", "Informe_Dosaje_" + id + ".docx");
-        document.put("url", "http://" + DOCKER_HOST + ":8080/api/documentos/" + id + "/download");
+        document.put("title", nombreArchivo);
+        document.put("url", "http://host.docker.internal:8080/api/documentos/" + id + "/download");
 
+        // 3. Configuración del Editor (Lo que faltaba)
         Map<String, Object> editorConfig = new HashMap<>();
         editorConfig.put("mode", mode);
         editorConfig.put("lang", "es");
 
-        String callbackUrl = "http://" + DOCKER_HOST + ":8080/api/documentos/" + id + "/save-callback";
+        // URL a donde OnlyOffice enviará los cambios al guardar
+        String callbackUrl = "http://host.docker.internal:8080/api/documentos/" + id + "/save-callback";
         if (empleadoIdActual != null) {
             callbackUrl += "?empleadoId=" + empleadoIdActual;
         }
         editorConfig.put("callbackUrl", callbackUrl);
 
+        // Datos del usuario para que aparezca quién edita en OnlyOffice
         Map<String, String> user = new HashMap<>();
         user.put("id", empleadoIdActual != null ? empleadoIdActual.toString() : "anon");
         user.put("name", "Usuario " + (empleadoIdActual != null ? empleadoIdActual : "Invitado"));
         editorConfig.put("user", user);
 
+        // 4. Unir todo en el mapa principal
         config.put("document", document);
         config.put("editorConfig", editorConfig);
 
+        // 5. Generar Token JWT para OnlyOffice
+        String token = Jwts.builder()
+                .setClaims(config)
+                .signWith(SignatureAlgorithm.HS256, "eFT7MiNho7WgLlP54slEHxlvriVduD4I".getBytes())
+                .compact();
+
+        config.put("token", token);
         return ResponseEntity.ok(config);
     }
 

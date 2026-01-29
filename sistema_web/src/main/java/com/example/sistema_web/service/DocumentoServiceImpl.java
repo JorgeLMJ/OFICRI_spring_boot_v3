@@ -1,4 +1,5 @@
 package com.example.sistema_web.service;
+import com.example.sistema_web.config.JwtAuthFilter;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun;
 import com.example.sistema_web.dto.DocumentoDTO;
 import com.example.sistema_web.model.Documento;
@@ -29,12 +30,16 @@ public class DocumentoServiceImpl implements DocumentoService {
     // ✅ 1. CREAR DOCUMENTO (Solo usado por botón Nuevo)
     @Override
     @Transactional
-    public Long crearDocumentoVacio() {
+    public Long crearDocumentoVacio(Long empleadoId) {
         Documento doc = new Documento();
+        // Buscamos al empleado y lo vinculamos
+        if (empleadoId != null) {
+            Empleado emp = empleadoRepository.findById(empleadoId).orElse(null);
+            doc.setEmpleado(emp);
+        }
         Documento saved = repository.save(doc);
         return saved.getId();
     }
-
     // ✅ 2. VALIDAR EXISTENCIA (Sin crear nada)
     @Override
     public boolean existeDocumento(Long id) {
@@ -45,20 +50,38 @@ public class DocumentoServiceImpl implements DocumentoService {
     @Override
     public byte[] obtenerContenidoArchivo(Long id) {
         Documento doc = repository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Doc no encontrado"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Documento no encontrado"));
 
+        // 1. Si ya tiene contenido guardado en la BD, devolverlo
         if (doc.getArchivo() != null && doc.getArchivo().length > 0) {
             return doc.getArchivo();
         }
 
+        // 2. LÓGICA DE PLANTILLA BASADA EN EL DOCUMENTO
+        // Por defecto usamos dosaje
+        String nombrePlantilla = "templates/informe_dosaje.docx";
+
+        // Verificamos el cargo del dueño del documento directamente
+        if (doc.getEmpleado() != null && doc.getEmpleado().getCargo() != null) {
+            String cargoDueño = doc.getEmpleado().getCargo().toLowerCase();
+
+            // Si el dueño (creador) es de Toxicología, USAR plantilla de Toxicología
+            if (cargoDueño.contains("tox")) {
+                nombrePlantilla = "templates/informe_toxicologia.docx";
+                System.out.println("🧪 Cargando plantilla física de TOXICOLOGÍA para el Doc ID: " + id);
+            } else {
+                System.out.println("🍷 Cargando plantilla física de DOSAJE para el Doc ID: " + id);
+            }
+        }
+
         try {
-            Resource resource = new ClassPathResource("templates/informe_dosaje.docx");
+            Resource resource = new ClassPathResource(nombrePlantilla);
             if (!resource.exists()) {
-                throw new RuntimeException("❌ Plantilla no encontrada en resources");
+                throw new RuntimeException("No se encontró el archivo .docx en: " + nombrePlantilla);
             }
             return resource.getInputStream().readAllBytes();
-        } catch (Exception e) {
-            throw new RuntimeException("Error al leer la plantilla base", e);
+        } catch (IOException e) {
+            throw new RuntimeException("Error al leer la plantilla física", e);
         }
     }
 
@@ -66,12 +89,26 @@ public class DocumentoServiceImpl implements DocumentoService {
     @Override
     @Transactional
     public void actualizarDesdeUrlOnlyOffice(Long id, String urlDescarga, Long empleadoId) {
-        try {
-            System.out.println("⬇️ Iniciando descarga para Doc ID: " + id);
+        // 🚩 CORRECCIÓN DEFINITIVA:
+        // Si OnlyOffice envía 'onlyoffice_pruebas' o 'onlyoffice_server',
+        // IntelliJ debe cambiarlo a 'localhost' para poder descargar el archivo.
+        if (urlDescarga.contains("onlyoffice_pruebas")) {
+            urlDescarga = urlDescarga.replace("onlyoffice_pruebas", "localhost");
+        } else if (urlDescarga.contains("onlyoffice_server")) {
+            urlDescarga = urlDescarga.replace("onlyoffice_server", "localhost");
+        }
 
+        System.out.println("⬇️ Descargando cambios desde OnlyOffice: " + urlDescarga);
+
+        try {
             java.net.URL url = new java.net.URL(urlDescarga);
             byte[] archivoBytes;
-            try (java.io.InputStream in = url.openStream()) {
+
+            // Usamos HttpURLConnection para un mejor manejo de flujos de red en Docker
+            java.net.HttpURLConnection connection = (java.net.HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("GET");
+
+            try (java.io.InputStream in = connection.getInputStream()) {
                 archivoBytes = in.readAllBytes();
             }
 
@@ -79,7 +116,7 @@ public class DocumentoServiceImpl implements DocumentoService {
                     new RuntimeException("Documento no encontrado con ID: " + id)
             );
 
-            // ✅ ESTO ES LO ÚNICO IMPORTANTE: Guardar el archivo en la entidad
+            // ✅ Guardamos el arreglo de bytes (LONGBLOB) en la entidad
             doc.setArchivo(archivoBytes);
 
             if (empleadoId != null) {
@@ -87,14 +124,14 @@ public class DocumentoServiceImpl implements DocumentoService {
                 if (empleado != null) doc.setEmpleado(empleado);
             }
 
-            // ⛔ COMENTAMOS ESTA LÍNEA para que no intente leer nada del Word
-             extraerMetadatosDelWord(archivoBytes, doc);
+            extraerMetadatosDelWord(archivoBytes, doc);
 
-            // Guardamos los cambios (el archivo blob) en la BD
+            // Guardamos los cambios en la BD MySQL
             repository.save(doc);
-            System.out.println("✅ ¡ARCHIVO GUARDADO! (Sin extracción de metadatos)");
+            System.out.println("✅ ¡ARCHIVO GUARDADO EXITOSAMENTE EN MYSQL! Tamaño: " + archivoBytes.length + " bytes.");
 
         } catch (Exception e) {
+            System.err.println("❌ Error crítico en el guardado: " + e.getMessage());
             e.printStackTrace();
             throw new RuntimeException("Error al guardar archivo: " + e.getMessage(), e);
         }
@@ -118,9 +155,6 @@ public class DocumentoServiceImpl implements DocumentoService {
                 for (XWPFTable table : document.getTables()) {
                     for (XWPFTableRow row : table.getRows()) {
 
-                        // 👇👇👇 CORRECCIÓN CRÍTICA 👇👇👇
-                        // Antes tenías: table.getTableCells() (ERROR)
-                        // Ahora es:     row.getTableCells()   (CORRECTO)
                         for (XWPFTableCell cell : row.getTableCells()) {
 
                             for (XWPFParagraph paragraph : cell.getParagraphs()) {
@@ -204,7 +238,29 @@ public class DocumentoServiceImpl implements DocumentoService {
 
     @Override
     public List<DocumentoDTO> listar() {
-        return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
+        // 1. Obtenemos el ID del empleado desde el Token JWT
+        Long idLogueado = JwtAuthFilter.getCurrentEmpleadoId();
+
+        // 2. Buscamos sus datos para verificar el cargo
+        Empleado empLogueado = empleadoRepository.findById(idLogueado).orElse(null);
+        if (empLogueado == null) return List.of();
+
+        String cargo = empLogueado.getCargo().toLowerCase();
+        List<Documento> misDocumentos;
+
+        // 🛡️ REGLA DE NEGOCIO ESTRICTA
+        if (cargo.contains("admin") || cargo.contains("quimico")) {
+            // El Administrador y Químico siguen viendo TODO
+            misDocumentos = repository.findAll();
+        } else {
+            // Los Auxiliares (Toxicología/Dosaje) ven SOLO lo que ellos crearon
+            misDocumentos = repository.findByEmpleadoId(idLogueado);
+        }
+
+        return misDocumentos.stream()
+                .map(this::mapToDTO)
+                .sorted((a, b) -> b.getId().compareTo(a.getId())) // Más recientes primero
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -479,7 +535,6 @@ public class DocumentoServiceImpl implements DocumentoService {
         return encontrado;
     }
 
-    // 👇 TU MÉTODO DE REEMPLAZO (Sin cambios, solo reutilizado)
     private boolean reemplazarTextoEnParrafo(XWPFParagraph p, String marcador, String nuevoValor) {
         boolean encontrado = false;
         List<XWPFRun> runs = p.getRuns();
@@ -496,56 +551,29 @@ public class DocumentoServiceImpl implements DocumentoService {
         }
         return encontrado;
     }
+    @Override
+    public String obtenerNombreSugerido(Long id) {
+        Documento doc = repository.findById(id).orElse(null);
+        String cargo = "";
 
+        // 1. Intentar obtener el cargo del usuario logueado actualmente
+        Long idLogueado = JwtAuthFilter.getCurrentEmpleadoId();
+        if (idLogueado != null) {
+            Empleado emp = empleadoRepository.findById(idLogueado).orElse(null);
+            if (emp != null) cargo = emp.getCargo().toLowerCase();
+        }
 
-    private boolean reemplazarValorEnSDT(XWPFParagraph p, String tagBuscado, String nuevoValor) {
-        boolean encontrado = false;
-
-        // IRunElement representa partes del párrafo (Textos, Negritas, SDTs)
-        for (IRunElement run : p.getIRuns()) {
-            if (run instanceof XWPFSDT) {
-                XWPFSDT sdt = (XWPFSDT) run;
-
-                // Verificamos si el Tag coincide (ignorando mayúsculas/minúsculas)
-                if (sdt.getTag() != null && sdt.getTag().equalsIgnoreCase(tagBuscado)) {
-
-                    try {
-                        // ✅ SOLUCIÓN ROBUSTA: Acceso directo al XML subyacente
-                        // 1. Accedemos al campo privado 'ctSdt' que contiene la estructura XML
-                        java.lang.reflect.Field field = sdt.getClass().getDeclaredField("ctSdt");
-                        field.setAccessible(true);
-                        Object ctSdt = field.get(sdt); // Puede ser CTSdtRun o CTSdtBlock
-
-                        // 2. Obtenemos el contenido (SdtContent)
-                        java.lang.reflect.Method getSdtContent = ctSdt.getClass().getMethod("getSdtContent");
-                        Object sdtContent = getSdtContent.invoke(ctSdt);
-
-                        // 3. Verificamos si es contenido de texto (CTSdtContentRun)
-                        if (sdtContent instanceof org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun) {
-                            org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun xmlContent =
-                                    (org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSdtContentRun) sdtContent;
-
-                            // 4. Limpiamos cualquier texto previo (nodos <w:r>)
-                            int size = xmlContent.sizeOfRArray();
-                            for (int i = size - 1; i >= 0; i--) {
-                                xmlContent.removeR(i);
-                            }
-
-                            // 5. Creamos un nuevo nodo de texto con el valor
-                            xmlContent.addNewR().addNewT().setStringValue(nuevoValor);
-                            encontrado = true;
-                            // System.out.println("✏️ SDT '" + tagBuscado + "' actualizado a: " + nuevoValor);
-                        } else {
-                            System.err.println("⚠️ El tipo de contenido SDT no es compatible para edición directa.");
-                        }
-
-                    } catch (Exception e) {
-                        System.err.println("❌ Error actualizando SDT '" + tagBuscado + "': " + e.getMessage());
-                    }
-                }
+        // 2. Si es Admin/Químico, mirar el cargo del creador del documento
+        if (cargo.contains("admin") || cargo.contains("quimico")) {
+            if (doc != null && doc.getEmpleado() != null) {
+                cargo = doc.getEmpleado().getCargo().toLowerCase();
             }
         }
-        return encontrado;
-    }
 
+        // 3. Retornar el nombre según el cargo detectado
+        if (cargo.contains("tox")) {
+            return "Informe_Toxicologia_" + id + ".docx";
+        }
+        return "Informe_Dosaje_" + id + ".docx";
+    }
 }

@@ -2,6 +2,8 @@ package com.example.sistema_web.controller;
 import com.example.sistema_web.config.JwtAuthFilter;
 import com.example.sistema_web.dto.OficioDosajeDTO;
 import com.example.sistema_web.service.OficioDosajeService;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
@@ -20,7 +22,7 @@ import java.util.Map;
 public class OficioDosajeController {
 
     private final OficioDosajeService service;
-    private static final String DOCKER_HOST = "host.docker.internal";
+   // private static final String DOCKER_HOST = "spring-boot-container";
 
     // 1. Crear Oficio
     @PostMapping("/nuevo")
@@ -51,16 +53,21 @@ public class OficioDosajeController {
         // ✅ Key dinámica para evitar caché
         document.put("key", "oficio-" + id + "-" + System.currentTimeMillis());
         document.put("title", "Oficio_Dosaje_" + id + ".docx");
-        document.put("url", "http://" + DOCKER_HOST + ":8080/api/oficio-dosaje/" + id + "/download");
+        document.put("url", "http://host.docker.internal:8080/api/oficio-dosaje/" + id + "/download");
 
         Map<String, Object> editorConfig = new HashMap<>();
         editorConfig.put("mode", mode);
         editorConfig.put("lang", "es");
-        editorConfig.put("callbackUrl", "http://" + DOCKER_HOST + ":8080/api/oficio-dosaje/" + id + "/save-callback");
+        editorConfig.put("callbackUrl", "http://host.docker.internal:8080/api/oficio-dosaje/" + id + "/save-callback");
 
         config.put("document", document);
         config.put("editorConfig", editorConfig);
+        String token = Jwts.builder()
+                .setClaims(config) // Metemos toda la config dentro del token
+                .signWith(SignatureAlgorithm.HS256, "eFT7MiNho7WgLlP54slEHxlvriVduD4I".getBytes())
+                .compact();
 
+        config.put("token", token);
         return ResponseEntity.ok(config);
     }
 

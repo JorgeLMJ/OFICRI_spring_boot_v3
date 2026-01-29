@@ -56,7 +56,9 @@ public class SecurityConfig {
         // Orígenes permitidos: Angular, Docker/OnlyOffice, y tu IP local
         configuration.setAllowedOrigins(Arrays.asList(
                 "http://localhost:4200",
-                "http://localhost:8081"
+                "http://localhost:8081",
+                "http://localhost:9000",
+                "http://onlyoffice_server"
         ));
 
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));

@@ -23,15 +23,12 @@ public class AsignacionToxicologia {
     @Lob
     @Column(name = "resultado_toxicologico", columnDefinition = "TEXT")
     private String resultadoToxicologico;
-
-    // --- Relación con Documento ---
     @ManyToOne
     @JoinColumn(name = "documento_id", nullable = false)
     private Documento documento;
 
-    // ✅ NUEVA RELACIÓN: Empleado (Químico Farmacéutico)
     @ManyToOne
-    @JoinColumn(name = "empleado_id", nullable = false)
+    @JoinColumn(name = "empleado_id")
     private Empleado empleado;
 
     // ✅ Métodos auxiliares para manejar JSON
