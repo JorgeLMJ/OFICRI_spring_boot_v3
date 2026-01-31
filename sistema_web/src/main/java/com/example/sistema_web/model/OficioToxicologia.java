@@ -4,15 +4,14 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "oficio_dosaje")
+@Table(name = "oficio_toxicologia")
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 @Getter
 @Setter
 @ToString(exclude = "documento")
-public class OficioDosaje {
-
+public class OficioToxicologia {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -24,7 +23,6 @@ public class OficioDosaje {
     @Lob
     @Column(name = "archivo", columnDefinition = "LONGBLOB")
     private byte[] archivo;
-    // Relación con Documento
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "documento_id", nullable = false)
     private Documento documento;

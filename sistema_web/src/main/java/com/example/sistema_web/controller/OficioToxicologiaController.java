@@ -1,7 +1,6 @@
 package com.example.sistema_web.controller;
-import com.example.sistema_web.config.JwtAuthFilter;
-import com.example.sistema_web.dto.OficioDosajeDTO;
-import com.example.sistema_web.service.OficioDosajeService;
+import com.example.sistema_web.dto.OficioToxicologiaDTO;
+import com.example.sistema_web.service.OficioToxicologiaService;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import lombok.RequiredArgsConstructor;
@@ -11,22 +10,22 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/oficio-dosaje")
+@RequestMapping("/api/oficio-toxicologia")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
-public class OficioDosajeController {
-
-    private final OficioDosajeService service;
-   // private static final String DOCKER_HOST = "spring-boot-container";
+public class OficioToxicologiaController {
+    private final OficioToxicologiaService service;
+    // private static final String DOCKER_HOST = "spring-boot-container";
     // 1. Crear Oficio
     @PostMapping("/nuevo")
-    public ResponseEntity<Long> iniciarNuevoOficioDosaje() {
-        Long nuevoId = service.crearOficioDosajeVacio();
+    public ResponseEntity<Long> iniciarNuevoOficioToxicologia() {
+        Long nuevoId = service.crearOficioToxicologiaVacio();
         System.out.println("🆕 Nuevo oficio dosaje creado con ID: " + nuevoId);
         return ResponseEntity.ok(nuevoId);
     }
@@ -37,11 +36,9 @@ public class OficioDosajeController {
             @PathVariable Long id,
             @RequestParam(defaultValue = "edit") String mode) {
 
-        if (!service.existeOficioDosaje(id)) {
+        if (!service.existeOficioToxicologia(id)) {
             return ResponseEntity.notFound().build();
         }
-
-
         Map<String, Object> config = new HashMap<>();
         config.put("documentType", "word");
         config.put("width", "100%");
@@ -52,12 +49,12 @@ public class OficioDosajeController {
         // ✅ Key dinámica para evitar caché
         document.put("key", "oficio-" + id + "-" + System.currentTimeMillis());
         document.put("title", "Oficio_" + id + ".docx");
-        document.put("url", "http://host.docker.internal:8080/api/oficio-dosaje/" + id + "/download");
+        document.put("url", "http://host.docker.internal:8080/api/oficio-toxicologia/" + id + "/download");
 
         Map<String, Object> editorConfig = new HashMap<>();
         editorConfig.put("mode", mode);
         editorConfig.put("lang", "es");
-        editorConfig.put("callbackUrl", "http://host.docker.internal:8080/api/oficio-dosaje/" + id + "/save-callback");
+        editorConfig.put("callbackUrl", "http://host.docker.internal:8080/api/oficio-toxicologia/" + id + "/save-callback");
 
         config.put("document", document);
         config.put("editorConfig", editorConfig);
@@ -72,12 +69,12 @@ public class OficioDosajeController {
 
     // 3. Descargar archivo (Usado por OnlyOffice y el usuario)
     @GetMapping("/{id}/download")
-    public ResponseEntity<Resource> downloadOficioDosaje(@PathVariable Long id) {
+    public ResponseEntity<Resource> downloadOficioToxicologia(@PathVariable Long id) {
         byte[] data = service.obtenerContenidoArchivo(id);
         ByteArrayResource resource = new ByteArrayResource(data);
 
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"oficio_dosaje.docx\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"oficio_toxicologia.docx\"")
                 .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
                 .contentLength(data.length)
                 .body(resource);
@@ -114,12 +111,12 @@ public class OficioDosajeController {
     }
 
     @PostMapping
-    public ResponseEntity<OficioDosajeDTO> crear(@RequestBody OficioDosajeDTO dto) {
+    public ResponseEntity<OficioToxicologiaDTO> crear(@RequestBody OficioToxicologiaDTO dto) {
         return ResponseEntity.ok(service.crear(dto));
     }
 
     @GetMapping
-    public ResponseEntity<List<OficioDosajeDTO>> listar() {
+    public ResponseEntity<List<OficioToxicologiaDTO>> listar() {
         return ResponseEntity.ok(service.listar());
     }
 
@@ -131,7 +128,7 @@ public class OficioDosajeController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> eliminarOficioDosaje(@PathVariable Long id) {
+    public ResponseEntity<?> eliminarOficioToxicologia(@PathVariable Long id) {
         try {
             service.eliminar(id);
             return ResponseEntity.ok().build();
@@ -149,7 +146,7 @@ public class OficioDosajeController {
             byte[] contenido = file.getBytes();
 
             // Llamamos a tu servicio (que ya tiene este método uploadDocumento)
-            service.uploadOficioDosaje(id, contenido);
+            service.uploadOficioToxicologia(id, contenido);
 
             return ResponseEntity.ok("✅ Archivo recibido y guardado en BD. Tamaño: " + contenido.length + " bytes.");
         } catch (Exception e) {
@@ -158,13 +155,13 @@ public class OficioDosajeController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<OficioDosajeDTO> obtenerPorId(@PathVariable Long id) {
+    public ResponseEntity<OficioToxicologiaDTO> obtenerPorId(@PathVariable Long id) {
         return ResponseEntity.ok(service.obtenerPorId(id));
     }
 
 
     @PutMapping("/{id}")
-    public ResponseEntity<OficioDosajeDTO> actualizar(@PathVariable Long id, @RequestBody OficioDosajeDTO dto) {
+    public ResponseEntity<OficioToxicologiaDTO> actualizar(@PathVariable Long id, @RequestBody OficioToxicologiaDTO dto) {
         return ResponseEntity.ok(service.actualizar(id, dto));
     }
     @PostMapping("/{id}/sincronizar")

@@ -1,5 +1,6 @@
 package com.example.sistema_web.service;
 
+import com.example.sistema_web.config.JwtAuthFilter;
 import com.example.sistema_web.dto.AsignacionToxicologiaDTO;
 import com.example.sistema_web.dto.ToxicologiaResultadoDTO;
 import com.example.sistema_web.model.AsignacionToxicologia;
@@ -8,14 +9,17 @@ import com.example.sistema_web.model.Empleado;
 import com.example.sistema_web.repository.AsignacionToxicologiaRepository;
 import com.example.sistema_web.repository.DocumentoRepository;
 import com.example.sistema_web.repository.EmpleadoRepository;
-import lombok.RequiredArgsConstructor;
 import org.apache.poi.xwpf.usermodel.*;
+import lombok.RequiredArgsConstructor;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,37 +38,26 @@ public class AsignacionToxicologiaServiceImpl implements AsignacionToxicologiaSe
     @Transactional
     public AsignacionToxicologiaDTO crear(AsignacionToxicologiaDTO dto) {
         Documento doc = documentoRepository.findById(dto.getDocumentoId())
-                .orElseThrow(() -> new RuntimeException("Documento no encontrado con ID: " + dto.getDocumentoId()));
-
-        Empleado destinatario = empleadoRepository.findById(dto.getEmpleadoId())
-                .orElseThrow(() -> new RuntimeException("Empleado no encontrado con ID: " + dto.getEmpleadoId()));
+                .orElseThrow(() -> new RuntimeException("Documento no encontrado"));
 
         Empleado emisor = empleadoRepository.findById(dto.getEmisorId())
-                .orElseThrow(() -> new RuntimeException("Emisor no encontrado con ID: " + dto.getEmisorId()));
-
-        String estado = "EN_PROCESO";
-        if ("COMPLETADO".equalsIgnoreCase(dto.getEstado())) {
-            estado = "COMPLETADO";
-        }
+                .orElseThrow(() -> new RuntimeException("Emisor no encontrado"));
 
         AsignacionToxicologia asignacion = AsignacionToxicologia.builder()
                 .area(dto.getArea())
-                .estado(estado)
+                .estado("EN_PROCESO")
                 .documento(doc)
-                .empleado(destinatario)
+                .empleado(empleadoRepository.findById(dto.getEmpleadoId()).orElseThrow())
+                .emisor(emisor)
                 .build();
 
         asignacion.setResultados(dto.getResultados());
         AsignacionToxicologia saved = repository.save(asignacion);
 
-        // ✅ Sincronizar tabla en Word
-        generarTablaSustanciasEnWord(dto.getDocumentoId(), dto.getResultados());
+        // Sincronización automática al crear
+        sincronizarDatosAlWord(saved.getId());
 
-        // ✅ Notificación
-        if ("EN_PROCESO".equals(estado)) {
-            enviarNotificacion(saved, emisor);
-        }
-
+        enviarNotificacion(saved, emisor);
         return mapToDTO(saved);
     }
 
@@ -72,121 +65,219 @@ public class AsignacionToxicologiaServiceImpl implements AsignacionToxicologiaSe
     @Transactional
     public AsignacionToxicologiaDTO actualizar(Long id, AsignacionToxicologiaDTO dto) {
         AsignacionToxicologia asignacion = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Asignación no encontrada con ID: " + id));
+                .orElseThrow(() -> new RuntimeException("Asignación no encontrada"));
 
-        String estado = "COMPLETADO".equalsIgnoreCase(dto.getEstado()) ? "COMPLETADO" : "EN_PROCESO";
-        asignacion.setEstado(estado);
-
-        if (dto.getDocumentoId() != null) {
-            Documento doc = documentoRepository.findById(dto.getDocumentoId()).orElseThrow();
-            asignacion.setDocumento(doc);
-        }
-
+        asignacion.setEstado(dto.getEstado());
         asignacion.setResultados(dto.getResultados());
+
         AsignacionToxicologia updated = repository.save(asignacion);
 
-        // ✅ Actualizar tabla en Word con los nuevos resultados
-        generarTablaSustanciasEnWord(updated.getDocumento().getId(), dto.getResultados());
+        // Sincronización automática al actualizar
+        sincronizarDatosAlWord(updated.getId());
 
         return mapToDTO(updated);
     }
 
-    private void generarTablaSustanciasEnWord(Long documentoId, ToxicologiaResultadoDTO resultados) {
-        Documento doc = documentoRepository.findById(documentoId).orElseThrow();
-        if (doc.getArchivo() == null) return;
+    @Override
+    @Transactional
+    public void eliminar(Long id) {
+        if (!repository.existsById(id)) {
+            throw new RuntimeException("ID no encontrado para eliminar");
+        }
+        repository.deleteById(id);
+    }
 
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(doc.getArchivo());
-             XWPFDocument document = new XWPFDocument(bis);
-             ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+    @Override
+    public AsignacionToxicologiaDTO obtenerPorId(Long id) {
+        return repository.findById(id).map(this::mapToDTO)
+                .orElseThrow(() -> new RuntimeException("Asignación no encontrada"));
+    }
 
-            XWPFTable tablaDestino = null;
+    @Override
+    public List<AsignacionToxicologiaDTO> listar() {
+        // 1. Obtener el ID del empleado logueado desde el ThreadLocal del Filtro
+        Long idLogueado = JwtAuthFilter.getCurrentEmpleadoId();
 
-            // 🔍 Búsqueda mejorada: Buscamos la tabla que tenga la palabra "Sustancia" o "Resultado"
-            for (XWPFTable tbl : document.getTables()) {
-                if (!tbl.getRows().isEmpty()) {
-                    // Accedemos a la primera fila (encabezado)
-                    XWPFTableRow headerRow = tbl.getRow(0);
+        // Si el ID es nulo (por alguna falla de sesión), no devolvemos nada por seguridad
+        if (idLogueado == null) {
+            System.err.println("⚠️ No se detectó ID de empleado en la sesión.");
+            return new ArrayList<>();
+        }
 
-                    // Concatenamos el texto de todas las celdas de la primera fila para validar
-                    String textoEncabezado = headerRow.getTableCells().stream()
-                            .map(XWPFTableCell::getText)
-                            .collect(Collectors.joining(" "))
-                            .toUpperCase();
+        // 2. Buscar sus datos para verificar su rango/cargo
+        Empleado empLogueado = empleadoRepository.findById(idLogueado).orElse(null);
+        if (empLogueado == null) return new ArrayList<>();
 
-                    if (textoEncabezado.contains("EXAMEN") || textoEncabezado.contains("RESULTADO DEL ANALISIS")) {
-                        tablaDestino = tbl;
-                        break;
+        String cargo = empLogueado.getCargo().trim().toLowerCase();
+        List<AsignacionToxicologia> listaFinal;
+
+        // 🛡️ REGLA DE VISIBILIDAD MEJORADA
+        // Si es Administrador o Químico (Alan), ve todo el laboratorio.
+        if (cargo.contains("admin") || cargo.contains("quimico")) {
+            System.out.println("🔓 Acceso TOTAL para: " + empLogueado.getNombre());
+            listaFinal = repository.findAll();
+        } else {
+            listaFinal = repository.findByEmisorId(idLogueado);
+        }
+
+        return listaFinal.stream()
+                .map(this::mapToDTO)
+                .sorted((a, b) -> b.getId().compareTo(a.getId())) // Las más nuevas arriba
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public void sincronizarDatosAlWord(Long id) {
+        AsignacionToxicologia asignacion = repository.findById(id).orElseThrow();
+        Documento docBase = asignacion.getDocumento();
+        if (docBase == null || docBase.getArchivo() == null) return;
+
+        try (ByteArrayInputStream bis = new ByteArrayInputStream(docBase.getArchivo());
+             XWPFDocument doc = new XWPFDocument(bis)) {
+
+            // 1. Obtener y ordenar sustancias
+            Map<String, String> activas = filtrarSustanciasActivas(asignacion.getResultados());
+            List<String> positivos = activas.entrySet().stream()
+                    .filter(e -> "Positivo".equalsIgnoreCase(e.getValue()))
+                    .map(Map.Entry::getKey).collect(Collectors.toList());
+            List<String> negativos = activas.entrySet().stream()
+                    .filter(e -> "Negativo".equalsIgnoreCase(e.getValue()))
+                    .map(Map.Entry::getKey).collect(Collectors.toList());
+
+            // 2. Llenar la tabla de Exámenes (Hacia abajo)
+            XWPFTable tablaExamen = null;
+            for (XWPFTable table : doc.getTables()) {
+                if (!table.getRows().isEmpty() && table.getRow(0).getCell(0).getText().toUpperCase().contains("EXAMEN")) {
+                    tablaExamen = table;
+                    break;
+                }
+            }
+
+            if (tablaExamen != null) {
+                while (tablaExamen.getRows().size() > 1) {
+                    tablaExamen.removeRow(1);
+                }
+                for (String s : positivos) {
+                    XWPFTableRow row = tablaExamen.createRow();
+                    row.getCell(0).setText(s.toUpperCase());
+                    XWPFRun run = row.getCell(1).getParagraphs().get(0).createRun();
+                    run.setText("POSITIVO");
+                    run.setBold(true);
+                }
+                for (String s : negativos) {
+                    XWPFTableRow row = tablaExamen.createRow();
+                    row.getCell(0).setText(s.toUpperCase());
+                    XWPFRun run = row.getCell(1).getParagraphs().get(0).createRun();
+                    run.setText("NEGATIVO");
+                    run.setBold(true);
+                }
+            }
+
+            // 3. REEMPLAZO SIMPLIFICADO DEL MARCADOR $c_resultado
+            String conclusion = redactarTextoConclusiones(positivos, negativos);
+
+            // Buscamos en todos los párrafos del documento
+            for (XWPFParagraph p : doc.getParagraphs()) {
+                reemplazarTextoSimple(p, "$c_resultado", conclusion);
+            }
+
+            // Buscamos en todas las tablas por si acaso
+            for (XWPFTable tbl : doc.getTables()) {
+                for (XWPFTableRow row : tbl.getRows()) {
+                    for (XWPFTableCell cell : row.getTableCells()) {
+                        for (XWPFParagraph p : cell.getParagraphs()) {
+                            reemplazarTextoSimple(p, "$c_resultado", conclusion);
+                        }
                     }
                 }
             }
-            if (tablaDestino != null) {
-                // 🧹 Limpieza: Eliminamos todas las filas excepto el encabezado (fila 0)
-                int filasTotales = tablaDestino.getRows().size();
-                for (int i = filasTotales - 1; i > 0; i--) {
-                    tablaDestino.removeRow(i);
-                }
 
-                Map<String, String> activas = filtrarSustanciasActivas(resultados);
+            // 4. Guardar cambios
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            doc.write(bos);
+            docBase.setArchivo(bos.toByteArray());
+            documentoRepository.save(docBase);
 
-                // ✍️ Si no hay sustancias, podrías poner una fila indicándolo
-                if (activas.isEmpty()) {
-                    XWPFTableRow row = tablaDestino.createRow();
-                    row.getCell(0).setText("NINGUNA");
-                    row.getCell(1).setText("NEGATIVO");
-                } else {
-                    for (Map.Entry<String, String> entry : activas.entrySet()) {
-                        XWPFTableRow row = tablaDestino.createRow();
-                        row.getCell(0).setText(entry.getKey());
-                        row.getCell(1).setText(entry.getValue());
-                    }
-                }
+            System.out.println("✅ Sincronización exitosa sin errores de puntero.");
 
-                document.write(bos);
-                doc.setArchivo(bos.toByteArray());
-                documentoRepository.save(doc);
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException("Error crítico en sincronización: " + e.getMessage());
+        }
+    }
+
+    private String redactarTextoConclusiones(List<String> pos, List<String> neg) {
+        StringBuilder sb = new StringBuilder("-- En la muestra M-1 analizada se obtuvo un resultado: ");
+
+        if (!pos.isEmpty()) {
+            sb.append("**POSITIVO** para presencia de ").append(String.join(", ", pos)).append(" y ");
+        }
+
+        if (!neg.isEmpty()) {
+            sb.append("**NEGATIVO** para presencia de ").append(String.join(", ", neg)).append(".");
+        }
+
+        if (pos.isEmpty() && neg.isEmpty()) {
+            sb.append("No se detectaron sustancias de interés toxicológico.");
+        }
+        return sb.toString();
+    }
+
+    private void reemplazarTextoSimple(XWPFParagraph p, String target, String replacement) {
+        String pText = p.getText();
+        if (pText != null && pText.contains(target)) {
+            // 1. Limpiamos todos los runs existentes para evitar fragmentación y errores null
+            for (int i = p.getRuns().size() - 1; i >= 0; i--) {
+                p.removeRun(i);
             }
-        } catch (IOException e) {
-            throw new RuntimeException("Error procesando Word: " + e.getMessage());
+
+            // 2. Aplicamos el reemplazo de la etiqueta por el texto generado
+            String textoFinal = pText.replace(target, replacement);
+
+            // 3. Procesamos las negritas marcadas con **
+            String[] partes = textoFinal.split("\\*\\*");
+
+            for (int i = 0; i < partes.length; i++) {
+                XWPFRun run = p.createRun();
+                run.setText(partes[i]);
+
+                // Configuración de formato requerida
+                run.setFontFamily("Times New Roman");
+                run.setFontSize(12); // 👈 Tamaño 12 solicitado
+
+                // Si el índice es impar, el texto estaba entre **, aplicamos negrita
+                if (i % 2 != 0) {
+                    run.setBold(true);
+                }
+            }
         }
     }
 
     private Map<String, String> filtrarSustanciasActivas(ToxicologiaResultadoDTO res) {
         Map<String, String> map = new HashMap<>();
-        if (res.getMarihuana() != null) map.put("MARIHUANA", res.getMarihuana());
-        if (res.getCocaina() != null) map.put("COCAÍNA", res.getCocaina());
-        if (res.getBenzodiacepinas() != null) map.put("BENZODIACEPINAS", res.getBenzodiacepinas());
-        if (res.getBarbituricos() != null) map.put("BARBITÚRICOS", res.getBarbituricos());
-        if (res.getCarbamatos() != null) map.put("CARBAMATOS", res.getCarbamatos());
-        if (res.getEstricnina() != null) map.put("ESTRICNINA", res.getEstricnina());
-        if (res.getOrganofosforados() != null) map.put("ORGANOFOSFORADOS", res.getOrganofosforados());
-        if (res.getMisoprostol() != null) map.put("MISOPROSTOL", res.getMisoprostol());
-        if (res.getPiretrinas() != null) map.put("PIRETRINAS", res.getPiretrinas());
-        if (res.getCumarinas() != null) map.put("CUMARINAS", res.getCumarinas());
+        if (res.getMarihuana() != null) map.put("Cannabilones (Marihuana)", res.getMarihuana());
+        if (res.getCocaina() != null) map.put("Alcaloide de cocaína", res.getCocaina());
+        if (res.getBenzodiacepinas() != null) map.put("Benzodiacepinas", res.getBenzodiacepinas());
+        if (res.getBarbituricos() != null) map.put("Barbitúricos", res.getBarbituricos());
+        if (res.getCarbamatos() != null) map.put("Carbamatos", res.getCarbamatos());
+        if (res.getEstricnina() != null) map.put("Estricnina", res.getEstricnina());
+        if (res.getOrganofosforados() != null) map.put("Organofosforado", res.getOrganofosforados());
+        if (res.getMisoprostol() != null) map.put("Misoprostol", res.getMisoprostol());
+        if (res.getPiretrinas() != null) map.put("Piretrinas", res.getPiretrinas());
+        if (res.getCumarinas() != null) map.put("Cumarinas", res.getCumarinas());
         return map;
     }
 
     private void enviarNotificacion(AsignacionToxicologia saved, Empleado emisor) {
-        Empleado quimico = empleadoRepository.findByCargo("Quimico Farmaceutico");
-        if (quimico != null) {
+        List<Empleado> quimicos = empleadoRepository.findAllByCargo("Quimico Farmaceutico");
+        if (quimicos != null && !quimicos.isEmpty()) {
             String mensaje = emisor.getNombre() + " " + emisor.getApellido() +
                     " ha asignado la tarea de toxicología ID " + saved.getId() + ".";
-            notificationService.crearNotificacion(mensaje, "Toxicología", saved.getId(), quimico, emisor);
+            for (Empleado q : quimicos) {
+                notificationService.crearNotificacion(mensaje, "Toxicología", saved.getId(), q, emisor);
+            }
         }
-    }
-
-    @Override
-    public AsignacionToxicologiaDTO obtenerPorId(Long id) {
-        return repository.findById(id).map(this::mapToDTO).orElseThrow();
-    }
-
-    @Override
-    public List<AsignacionToxicologiaDTO> listar() {
-        return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
-    }
-
-    @Override
-    public void eliminar(Long id) {
-        repository.deleteById(id);
     }
 
     private AsignacionToxicologiaDTO mapToDTO(AsignacionToxicologia asignacion) {

@@ -31,6 +31,10 @@ public class AsignacionToxicologia {
     @JoinColumn(name = "empleado_id")
     private Empleado empleado;
 
+    @ManyToOne
+    @JoinColumn(name = "emisor_id")
+    private Empleado emisor;
+
     // ✅ Métodos auxiliares para manejar JSON
     public ToxicologiaResultadoDTO getResultados() {
         if (this.resultadoToxicologico == null) {

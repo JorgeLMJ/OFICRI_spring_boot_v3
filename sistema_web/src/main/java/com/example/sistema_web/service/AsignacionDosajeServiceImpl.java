@@ -1,5 +1,6 @@
 package com.example.sistema_web.service;
 
+import com.example.sistema_web.config.JwtAuthFilter;
 import com.example.sistema_web.dto.AsignacionDosajeDTO;
 import com.example.sistema_web.model.AsignacionDosaje;
 import com.example.sistema_web.model.Documento;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -22,7 +24,7 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
     private final DocumentoRepository documentoRepository;
     private final EmpleadoRepository empleadoRepository;
     private final NotificationService notificationService;
-    private final DocumentoService documentoService; // ✅ Inyectado correctamente
+    private final DocumentoService documentoService;
 
     @Override
     @Transactional
@@ -44,11 +46,12 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
                 .estado(estado)
                 .documento(doc)
                 .empleado(destinatario)
+                .emisor(emisor)
                 .build();
 
         AsignacionDosaje saved = repository.save(asignacion);
 
-        // ✅ MAGIA: Si se crea como completado o tiene valor, actualizamos el Word
+        // ✅ Sincronización automática
         this.verificarYActualizarWord(dto);
 
         if ("EN_PROCESO".equals(estado)) {
@@ -82,7 +85,7 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
 
         AsignacionDosaje updated = repository.save(asignacion);
 
-        // ✅ MAGIA: Actualizamos el Word físicamente con el nuevo valor
+        // ✅ Sincronización automática
         this.verificarYActualizarWord(dto);
 
         if ("EN_PROCESO".equals(estado)) {
@@ -94,11 +97,25 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
         return mapToDTO(updated);
     }
 
-    // --- MÉTODOS DE APOYO ---
+    // ✅ IMPLEMENTACIÓN DEL MÉTODO FALTANTE PARA CORREGIR EL ERROR
+    @Override
+    @Transactional
+    public void sincronizarDatosAlWord(Long id) {
+        AsignacionDosaje asignacion = repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("No se encontró la asignación para sincronizar"));
+
+        if (asignacion.getDocumento() != null && asignacion.getCualitativo() != null) {
+            documentoService.actualizarCampoEnWord(
+                    asignacion.getDocumento().getId(),
+                    "CUANTITATIVO",
+                    asignacion.getCualitativo()
+            );
+            System.out.println("✅ Word sincronizado para Dosaje ID: " + id);
+        }
+    }
 
     private void verificarYActualizarWord(AsignacionDosajeDTO dto) {
         if (dto.getDocumentoId() != null && dto.getCualitativo() != null && !dto.getCualitativo().isEmpty()) {
-            System.out.println("🔄 Inyectando resultado en Word vía DocumentoService...");
             documentoService.actualizarCampoEnWord(
                     dto.getDocumentoId(),
                     "CUANTITATIVO",
@@ -108,11 +125,17 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
     }
 
     private void enviarNotificacionAsignacion(Empleado emisor, Long id) {
-        Empleado quimico = empleadoRepository.findByCargo("Quimico Farmaceutico");
-        if (quimico != null && emisor != null) {
+        // ✅ CORRECCIÓN: Buscamos una LISTA de químicos, no solo uno
+        List<Empleado> quimicos = empleadoRepository.findAllByCargo("Quimico Farmaceutico");
+
+        if (quimicos != null && !quimicos.isEmpty() && emisor != null) {
             String mensaje = emisor.getNombre() + " " + emisor.getApellido() +
                     " ha asignado la tarea de dosaje ID " + id + ".";
-            notificationService.crearNotificacion(mensaje, "Dosaje", id, quimico, emisor);
+
+            // Enviamos la notificación a cada químico registrado
+            for (Empleado q : quimicos) {
+                notificationService.crearNotificacion(mensaje, "Dosaje", id, q, emisor);
+            }
         }
     }
 
@@ -123,7 +146,35 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
 
     @Override
     public List<AsignacionDosajeDTO> listar() {
-        return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
+        // 1. Obtener el ID del empleado logueado desde el Token
+        Long idLogueado = JwtAuthFilter.getCurrentEmpleadoId();
+
+        if (idLogueado == null) {
+            System.err.println("⚠️ No se detectó ID de empleado en la sesión.");
+            return new ArrayList<>();
+        }
+
+        // 2. Buscar sus datos para verificar su rango/cargo
+        Empleado empLogueado = empleadoRepository.findById(idLogueado).orElse(null);
+        if (empLogueado == null) return new ArrayList<>();
+
+        String cargo = empLogueado.getCargo().trim().toLowerCase();
+        List<AsignacionDosaje> listaFinal;
+
+        // 🛡️ REGLA DE VISIBILIDAD: Admin y Químicos ven todo el laboratorio
+        if (cargo.contains("admin") || cargo.contains("quimico")) {
+            System.out.println("🔓 Acceso TOTAL Dosaje para: " + empLogueado.getNombre());
+            listaFinal = repository.findAll();
+        } else {
+            // Los Auxiliares ven solo sus propias asignaciones (donde emisor_id = su ID)
+            System.out.println("🔒 Acceso FILTRADO Dosaje para: " + empLogueado.getNombre());
+            listaFinal = repository.findByEmisorId(idLogueado);
+        }
+
+        return listaFinal.stream()
+                .map(this::mapToDTO)
+                .sorted((a, b) -> b.getId().compareTo(a.getId())) // Más recientes arriba
+                .collect(Collectors.toList());
     }
 
     @Override

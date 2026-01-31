@@ -25,4 +25,8 @@ public class AsignacionDosaje {
     @ManyToOne
     @JoinColumn(name = "empleado_id")
     private Empleado empleado;
+
+    @ManyToOne
+    @JoinColumn(name = "emisor_id")
+    private Empleado emisor;
 }

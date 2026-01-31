@@ -1,8 +1,7 @@
 package com.example.sistema_web.dto;
-
 import lombok.Data;
 @Data
-public class OficioDosajeDTO {
+public class OficioToxicologiaDTO {
     private Long id;
     private String fecha;
     private String nro_oficio;

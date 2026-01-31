@@ -1,7 +1,5 @@
-// src/main/java/com/example/sistema_web/config/JwtAuthFilter.java
 package com.example.sistema_web.config;
 import com.example.sistema_web.model.Empleado;
-import com.example.sistema_web.model.Documento;
 import com.example.sistema_web.service.DocumentoService;
 import com.example.sistema_web.service.EmpleadoService;
 import io.jsonwebtoken.Claims;
@@ -35,10 +33,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     public static Long getCurrentEmpleadoId() {
         return CURRENT_EMPLEADO_ID.get();
     }
-    public static Long getCurrentDocumentoId() {
-        return CURRENT_DOCUMENTO_ID.get();
-    }
-
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
@@ -56,7 +50,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 path.startsWith("/api/graficos/") ||
                 (path.startsWith("/api/documentos/") && path.contains("/download")) ||
                 (path.startsWith("/api/oficio-dosaje/") && path.contains("/callback")) ||
-                (path.startsWith("/api/oficio-dosaje/") && path.contains("/download")))
+                (path.startsWith("/api/oficio-dosaje/") && path.contains("/download")) ||
+                (path.startsWith("/api/oficio-toxicologia/") && path.contains("/callback")) ||
+                (path.startsWith("/api/oficio-toxicologia/") && path.contains("/download")))
         {
 
             filterChain.doFilter(request, response);
@@ -78,7 +74,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
                 // ✅ EXCEPCIÓN: Admin siempre tiene acceso
                 if (ADMIN_EMAIL.equals(email)) {
-                    CURRENT_EMPLEADO_ID.set(null);
+                    CURRENT_EMPLEADO_ID.set(empleadoId);
                     filterChain.doFilter(request, response);
                     CURRENT_EMPLEADO_ID.remove();
                     return;
@@ -112,4 +108,5 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             response.getWriter().write("Token no proporcionado");
         }
     }
+
 }

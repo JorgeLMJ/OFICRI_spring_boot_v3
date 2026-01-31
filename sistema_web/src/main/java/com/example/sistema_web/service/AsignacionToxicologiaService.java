@@ -10,4 +10,5 @@ public interface AsignacionToxicologiaService {
     List<AsignacionToxicologiaDTO> listar();
     AsignacionToxicologiaDTO actualizar(Long id, AsignacionToxicologiaDTO dto);
     void eliminar(Long id);
+    void sincronizarDatosAlWord(Long id);
 }

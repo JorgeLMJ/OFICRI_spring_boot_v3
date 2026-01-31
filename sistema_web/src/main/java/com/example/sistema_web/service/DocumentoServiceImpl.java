@@ -238,28 +238,30 @@ public class DocumentoServiceImpl implements DocumentoService {
 
     @Override
     public List<DocumentoDTO> listar() {
-        // 1. Obtenemos el ID del empleado desde el Token JWT
         Long idLogueado = JwtAuthFilter.getCurrentEmpleadoId();
 
-        // 2. Buscamos sus datos para verificar el cargo
+        // Si es el usuario Admin global (ID nulo o cargo admin)
+        if (idLogueado == null) {
+            System.out.println("👑 Acceso SuperAdmin: Listando todo.");
+            return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
+        }
+
         Empleado empLogueado = empleadoRepository.findById(idLogueado).orElse(null);
         if (empLogueado == null) return List.of();
 
         String cargo = empLogueado.getCargo().toLowerCase();
         List<Documento> misDocumentos;
 
-        // 🛡️ REGLA DE NEGOCIO ESTRICTA
+        // Regla para Químicos y Administradores de tabla
         if (cargo.contains("admin") || cargo.contains("quimico")) {
-            // El Administrador y Químico siguen viendo TODO
             misDocumentos = repository.findAll();
         } else {
-            // Los Auxiliares (Toxicología/Dosaje) ven SOLO lo que ellos crearon
             misDocumentos = repository.findByEmpleadoId(idLogueado);
         }
 
         return misDocumentos.stream()
                 .map(this::mapToDTO)
-                .sorted((a, b) -> b.getId().compareTo(a.getId())) // Más recientes primero
+                .sorted((a, b) -> b.getId().compareTo(a.getId()))
                 .collect(Collectors.toList());
     }
 

@@ -12,12 +12,10 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.web.cors.CorsConfiguration; // 👈 Importante
-import org.springframework.web.cors.CorsConfigurationSource; // 👈 Importante
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource; // 👈 Importante
-
-import java.util.Arrays; // 👈 Importante
-import java.util.List;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import java.util.Arrays;
 
 @Configuration
 @EnableWebSecurity
@@ -45,7 +43,9 @@ public class SecurityConfig {
                 .requestMatchers("/api/documentos/*/save-callback")
                 .requestMatchers("/api/onlyoffice/**")
                 .requestMatchers("/api/oficio-dosaje/*/download")
-                .requestMatchers("/api/oficio-dosaje/*/save-callback");
+                .requestMatchers("/api/oficio-dosaje/*/save-callback")
+                .requestMatchers("/api/oficio-toxicologia/*/download")
+                .requestMatchers("/api/oficio-toxicologia/*/save-callback");
     }
 
     // 👇👇👇 1. DEFINIR LA FUENTE DE CONFIGURACIÓN CORS AQUÍ 👇👇👇
@@ -95,6 +95,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/documentos/**").permitAll()
                         .requestMatchers("/api/onlyoffice/**").permitAll()
                         .requestMatchers("/api/oficio-dosaje/**").permitAll()
+                        .requestMatchers("/api/oficio-toxicologia/**").permitAll()
                         .requestMatchers("/api/asignaciones-dosaje/**").permitAll()
                         .requestMatchers("/api/asignaciones-toxicologia/**").permitAll()
                         .requestMatchers("/api/usuarios/**").permitAll()
@@ -106,6 +107,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/documentos/*/download").permitAll()
                         .requestMatchers("/api/oficio-dosaje/*/download").permitAll()
                         .requestMatchers("/api/oficio-dosaje/*/callback").permitAll()
+                        .requestMatchers("/api/oficio-toxicologia/*/download").permitAll()
+                        .requestMatchers("/api/oficio-toxicologia/*/callback").permitAll()
                         .anyRequest().permitAll()
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
