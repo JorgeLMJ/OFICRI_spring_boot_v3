@@ -49,9 +49,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (path.startsWith("/api/auth/") ||
                 path.startsWith("/api/graficos/") ||
                 (path.startsWith("/api/documentos/") && path.contains("/download")) ||
-                (path.startsWith("/api/oficio-dosaje/") && path.contains("/callback")) ||
+                (path.startsWith("/api/oficio-dosaje/") && path.contains("/save-callback")) ||
                 (path.startsWith("/api/oficio-dosaje/") && path.contains("/download")) ||
-                (path.startsWith("/api/oficio-toxicologia/") && path.contains("/callback")) ||
+                (path.startsWith("/api/oficio-toxicologia/") && path.contains("/save-callback")) ||
                 (path.startsWith("/api/oficio-toxicologia/") && path.contains("/download")))
         {
 

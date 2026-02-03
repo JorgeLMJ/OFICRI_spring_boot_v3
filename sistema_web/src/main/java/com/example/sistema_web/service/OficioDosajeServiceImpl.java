@@ -1,8 +1,11 @@
 package com.example.sistema_web.service;
+import com.example.sistema_web.config.JwtAuthFilter;
 import com.example.sistema_web.dto.OficioDosajeDTO;
+import com.example.sistema_web.model.Empleado;
 import com.example.sistema_web.model.OficioDosaje;
 import com.example.sistema_web.model.Documento;
 import com.example.sistema_web.repository.DocumentoRepository;
+import com.example.sistema_web.repository.EmpleadoRepository;
 import com.example.sistema_web.repository.OficioDosajeRepository;
 import fr.opensagres.xdocreport.document.IXDocReport;
 import fr.opensagres.xdocreport.document.registry.XDocReportRegistry;
@@ -21,6 +24,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.time.LocalDate;
@@ -33,6 +37,7 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
 
     private final OficioDosajeRepository repository;
     private final DocumentoRepository documentoRepository;
+    private final EmpleadoRepository empleadoRepository;
 
     // ✅ 1. CREAR OFICIO
     @Override
@@ -74,10 +79,8 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
     @Override
     @Transactional
     public void actualizarDesdeUrlOnlyOffice(Long id, String urlDescarga, Long documentoId) {
-        // 🚩 CLAVE: OnlyOffice envía 'localhost', pero desde el contenedor de Spring
-        // debemos usar el nombre del servicio 'onlyoffice_server' para poder descargar.
-        if (urlDescarga.contains("localhost")) {
-            urlDescarga = urlDescarga.replace("localhost", "onlyoffice_server");
+        if (urlDescarga.contains("onlyoffice_server")) {
+            urlDescarga = urlDescarga.replace("onlyoffice_server", "localhost");
         }
 
         System.out.println("⬇️ Descargando cambios del Oficio desde OnlyOffice: " + urlDescarga);
@@ -118,7 +121,12 @@ public class OficioDosajeServiceImpl implements OficioDosajeService {
 public OficioDosajeDTO crear(OficioDosajeDTO dto) {
     OficioDosaje oficio = mapToEntity(dto);
 
-    // 1. Cargar la plantilla base desde resources
+    // Capturar al emisor al crear
+    Long idEmisorLogueado = JwtAuthFilter.getCurrentEmpleadoId();
+    if (idEmisorLogueado != null) {
+        empleadoRepository.findById(idEmisorLogueado).ifPresent(oficio::setEmisor);
+    }
+
     byte[] plantillaBase = cargarPlantillaDesdeResources();
     oficio.setArchivo(plantillaBase);
 
@@ -143,7 +151,38 @@ public OficioDosajeDTO crear(OficioDosajeDTO dto) {
 
     @Override
     public List<OficioDosajeDTO> listar() {
-        return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
+        // 1. Obtener el ID del empleado logueado desde el Token
+        Long idLogueado = JwtAuthFilter.getCurrentEmpleadoId();
+
+        // 🚩 CAMBIO CLAVE: Si es el admin global (id nulo) o no tiene empleado asociado, ver TODO
+        if (idLogueado == null) {
+            System.out.println("👑 Acceso SuperAdmin detectado. Listando todos los Oficios de Dosaje.");
+            return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
+        }
+
+        // 2. Buscar sus datos para verificar su rango/cargo
+        Empleado empLogueado = empleadoRepository.findById(idLogueado).orElse(null);
+
+        // Si no encontramos al empleado pero tiene sesión, por seguridad mostramos todo (caso Admin)
+        if (empLogueado == null) return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
+
+        String cargo = empLogueado.getCargo().trim().toLowerCase();
+        List<OficioDosaje> listaFinal;
+
+        // 🛡️ REGLA DE VISIBILIDAD: Admin y Químicos ven todo el laboratorio
+        if (cargo.contains("admin") || cargo.contains("quimico") || cargo.contains("químico")) {
+            System.out.println("🔓 Acceso TOTAL Oficios Dosaje para: " + empLogueado.getNombre());
+            listaFinal = repository.findAll();
+        } else {
+            // 🔒 Los Auxiliares ven solo sus propios oficios
+            System.out.println("🔒 Acceso FILTRADO Oficios Dosaje para Auxiliar: " + empLogueado.getNombre());
+            listaFinal = repository.findByEmisorId(idLogueado);
+        }
+
+        return listaFinal.stream()
+                .map(this::mapToDTO)
+                .sorted((a, b) -> b.getId().compareTo(a.getId())) // Más recientes arriba
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -155,7 +194,6 @@ public OficioDosajeDTO crear(OficioDosajeDTO dto) {
         oficio.setNro_oficio(dto.getNro_oficio());
         oficio.setGradoPNP(dto.getGradoPNP());
         oficio.setNombresyapellidosPNP(dto.getNombresyapellidosPNP());
-        oficio.setNro_informe_referencia(dto.getNro_informe_referencia());
         oficio.setArchivo(dto.getArchivo());
         if (dto.getDocumentoId() != null) {
             var documento = documentoRepository.findById(dto.getDocumentoId())
@@ -189,18 +227,14 @@ public OficioDosajeDTO crear(OficioDosajeDTO dto) {
         dto.setNro_oficio(oficio.getNro_oficio());
         dto.setGradoPNP(oficio.getGradoPNP());
         dto.setNombresyapellidosPNP(oficio.getNombresyapellidosPNP());
-        dto.setNro_informe_referencia(oficio.getNro_informe_referencia());
         dto.setArchivo(oficio.getArchivo());
-
-       // dto.setDocumentoId(oficio.getDocumento() != null ? oficio.getDocumento().getId() : null);
-       // return dto;
         if (oficio.getDocumento() != null) {
             dto.setDocumentoId(oficio.getDocumento().getId());
             dto.setPersonaInvolucrada(oficio.getDocumento().getNombresyapellidos());
             dto.setDniInvolucrado(oficio.getDocumento().getDni());
             dto.setEdadInvolucrado(oficio.getDocumento().getEdad());
             dto.setTipoMuestra(oficio.getDocumento().getTipoMuestra());
-            dto.setNroInformeBase(oficio.getDocumento().getNumeroInforme());
+            dto.setNroInformeBase(oficio.getDocumento().getNombreOficio());
 
         }
         return dto;
@@ -212,7 +246,6 @@ public OficioDosajeDTO crear(OficioDosajeDTO dto) {
                 .nro_oficio(dto.getNro_oficio())
                 .gradoPNP(dto.getGradoPNP())
                 .nombresyapellidosPNP(dto.getNombresyapellidosPNP())
-                .nro_informe_referencia(dto.getNro_informe_referencia())
                 .archivo(dto.getArchivo());
 
         if (dto.getDocumentoId() != null) {
@@ -249,7 +282,6 @@ public OficioDosajeDTO crear(OficioDosajeDTO dto) {
             context.put("f_oficio", safeString(oficio.getNro_oficio()));
             context.put("f_grado", safeString(oficio.getGradoPNP()));
             context.put("f_responsablePNP", safeString(oficio.getNombresyapellidosPNP()));
-            context.put("f_nro_informe_referencia", safeString(oficio.getNro_informe_referencia()));
 
             if (docBase != null) {
                 context.put("d_nombre", safeString(docBase.getNombresyapellidos()));
@@ -257,6 +289,7 @@ public OficioDosajeDTO crear(OficioDosajeDTO dto) {
                 context.put("d_edad", safeString(docBase.getEdad()));
                 context.put("d_muestra", safeString(docBase.getTipoMuestra()));
                 context.put("d_informe", safeString(docBase.getNumeroInforme()));
+                context.put("d_nombre_oficio_base", safeString(docBase.getNombreOficio()));
             }
 
             // 3. GENERAR Y GUARDAR

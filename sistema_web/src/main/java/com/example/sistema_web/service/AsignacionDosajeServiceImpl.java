@@ -45,20 +45,35 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
                 .cualitativo(dto.getCualitativo())
                 .estado(estado)
                 .documento(doc)
-                .empleado(destinatario)
+                .empleado(destinatario) // ✅ El perito seleccionado en el formulario
                 .emisor(emisor)
                 .build();
 
         AsignacionDosaje saved = repository.save(asignacion);
 
-        // ✅ Sincronización automática
+        // Sincronización automática
         this.verificarYActualizarWord(dto);
 
+        // ✅ MODIFICADO: Envío de notificación solo al destinatario asignado
         if ("EN_PROCESO".equals(estado)) {
-            enviarNotificacionAsignacion(emisor, saved.getId());
+            enviarNotificacionIndividual(emisor, destinatario, saved.getId());
         }
 
         return mapToDTO(saved);
+    }
+
+    // ✅ NUEVO MÉTODO OPTIMIZADO
+    private void enviarNotificacionIndividual(Empleado emisor, Empleado destinatario, Long asignacionId) {
+        if (emisor != null && destinatario != null) {
+            String mensaje = emisor.getNombre() + " " + emisor.getApellido() +
+                    " le ha asignado la tarea de dosaje ID " + asignacionId + ".";
+
+            // Se crea un único registro en la tabla 'notifications' dirigido al ID del destinatario
+            notificationService.crearNotificacion(mensaje, "Dosaje", asignacionId, destinatario, emisor);
+
+            System.out.println("🔔 Notificación de Dosaje enviada exclusivamente a: " +
+                    destinatario.getNombre() + " (ID: " + destinatario.getId() + ")");
+        }
     }
 
     @Override
@@ -91,7 +106,10 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
         if ("EN_PROCESO".equals(estado)) {
             Empleado emisor = (dto.getEmisorId() != null) ?
                     empleadoRepository.findById(dto.getEmisorId()).orElse(null) : null;
-            enviarNotificacionAsignacion(emisor, updated.getId());
+
+            // 🚩 CORRECCIÓN AQUÍ: Se agregaron los 3 argumentos requeridos
+            // Se envía: emisor, el empleado asignado (destinatario) y el ID
+            enviarNotificacionIndividual(emisor, updated.getEmpleado(), updated.getId());
         }
 
         return mapToDTO(updated);
@@ -124,20 +142,6 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
         }
     }
 
-    private void enviarNotificacionAsignacion(Empleado emisor, Long id) {
-        // ✅ CORRECCIÓN: Buscamos una LISTA de químicos, no solo uno
-        List<Empleado> quimicos = empleadoRepository.findAllByCargo("Quimico Farmaceutico");
-
-        if (quimicos != null && !quimicos.isEmpty() && emisor != null) {
-            String mensaje = emisor.getNombre() + " " + emisor.getApellido() +
-                    " ha asignado la tarea de dosaje ID " + id + ".";
-
-            // Enviamos la notificación a cada químico registrado
-            for (Empleado q : quimicos) {
-                notificationService.crearNotificacion(mensaje, "Dosaje", id, q, emisor);
-            }
-        }
-    }
 
     @Override
     public AsignacionDosajeDTO obtenerPorId(Long id) {
@@ -146,34 +150,37 @@ public class AsignacionDosajeServiceImpl implements AsignacionDosajeService {
 
     @Override
     public List<AsignacionDosajeDTO> listar() {
-        // 1. Obtener el ID del empleado logueado desde el Token
         Long idLogueado = JwtAuthFilter.getCurrentEmpleadoId();
-
         if (idLogueado == null) {
-            System.err.println("⚠️ No se detectó ID de empleado en la sesión.");
-            return new ArrayList<>();
+            System.out.println("👑 Acceso SuperAdmin detectado por ID nulo (Sistema Base). Listando todo.");
+            return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
         }
 
-        // 2. Buscar sus datos para verificar su rango/cargo
         Empleado empLogueado = empleadoRepository.findById(idLogueado).orElse(null);
-        if (empLogueado == null) return new ArrayList<>();
-
-        String cargo = empLogueado.getCargo().trim().toLowerCase();
+        if (empLogueado == null) return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
+        String cargo = empLogueado.getCargo().toLowerCase();
         List<AsignacionDosaje> listaFinal;
 
-        // 🛡️ REGLA DE VISIBILIDAD: Admin y Químicos ven todo el laboratorio
-        if (cargo.contains("admin") || cargo.contains("quimico")) {
-            System.out.println("🔓 Acceso TOTAL Dosaje para: " + empLogueado.getNombre());
+        // 🛡️ REGLA DE VISIBILIDAD POR EMPLEADO_ID (PARA QUÍMICOS)
+        if (cargo.contains("admin")) {
+            // El Administrador sigue viendo TODO
+            System.out.println("🔓 ACCESO TOTAL - Administrador: " + empLogueado.getNombre());
             listaFinal = repository.findAll();
-        } else {
-            // Los Auxiliares ven solo sus propias asignaciones (donde emisor_id = su ID)
-            System.out.println("🔒 Acceso FILTRADO Dosaje para: " + empLogueado.getNombre());
+        }
+        else if (cargo.contains("quimico") || cargo.contains("químico")) {
+            // 🔒 Los Químicos SOLO ven los trabajos donde ellos son el PERITO ASIGNADO (empleado_id)
+            System.out.println("🔒 ACCESO PRIVADO (Por Asignación) - Químico: " + empLogueado.getNombre());
+            listaFinal = repository.findByEmpleadoId(idLogueado);
+        }
+        else {
+            // Los Auxiliares ven lo que ellos mismos REGISTRARON (emisor_id)
+            System.out.println("🔒 ACCESO PRIVADO (Por Creación) - Auxiliar: " + empLogueado.getNombre());
             listaFinal = repository.findByEmisorId(idLogueado);
         }
 
         return listaFinal.stream()
                 .map(this::mapToDTO)
-                .sorted((a, b) -> b.getId().compareTo(a.getId())) // Más recientes arriba
+                .sorted((a, b) -> b.getId().compareTo(a.getId()))
                 .collect(Collectors.toList());
     }
 

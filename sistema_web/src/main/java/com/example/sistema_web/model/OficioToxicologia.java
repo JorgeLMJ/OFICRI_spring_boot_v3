@@ -19,7 +19,9 @@ public class OficioToxicologia {
     private String nro_oficio;
     private String gradoPNP;
     private String nombresyapellidosPNP;
-    private String nro_informe_referencia;
+    @ManyToOne
+    @JoinColumn(name = "emisor_id")
+    private Empleado emisor;
     @Lob
     @Column(name = "archivo", columnDefinition = "LONGBLOB")
     private byte[] archivo;

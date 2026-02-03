@@ -43,22 +43,39 @@ public class AsignacionToxicologiaServiceImpl implements AsignacionToxicologiaSe
         Empleado emisor = empleadoRepository.findById(dto.getEmisorId())
                 .orElseThrow(() -> new RuntimeException("Emisor no encontrado"));
 
+        Empleado destinatario = empleadoRepository.findById(dto.getEmpleadoId())
+                .orElseThrow(() -> new RuntimeException("Empleado destinatario no encontrado"));
+
         AsignacionToxicologia asignacion = AsignacionToxicologia.builder()
                 .area(dto.getArea())
                 .estado("EN_PROCESO")
                 .documento(doc)
-                .empleado(empleadoRepository.findById(dto.getEmpleadoId()).orElseThrow())
+                .empleado(destinatario) // ✅ Este es el perito seleccionado en el modal
                 .emisor(emisor)
                 .build();
 
         asignacion.setResultados(dto.getResultados());
         AsignacionToxicologia saved = repository.save(asignacion);
 
-        // Sincronización automática al crear
         sincronizarDatosAlWord(saved.getId());
 
-        enviarNotificacion(saved, emisor);
+        // ✅ MODIFICADO: Solo enviamos a la persona asignada
+        enviarNotificacionIndividual(saved, emisor, destinatario);
+
         return mapToDTO(saved);
+    }
+
+    // ✅ NUEVO MÉTODO OPTIMIZADO: Envío a una sola persona
+    private void enviarNotificacionIndividual(AsignacionToxicologia saved, Empleado emisor, Empleado destinatario) {
+        if (destinatario != null && emisor != null) {
+            String mensaje = emisor.getNombre() + " " + emisor.getApellido() +
+                    " le ha asignado la tarea de toxicología ID " + saved.getId() + ".";
+
+            // Creamos una única notificación dirigida al ID del perito seleccionado
+            notificationService.crearNotificacion(mensaje, "Toxicología", saved.getId(), destinatario, emisor);
+
+            System.out.println("🔔 Notificación enviada únicamente a: " + destinatario.getNombre() + " (ID: " + destinatario.getId() + ")");
+        }
     }
 
     @Override
@@ -95,34 +112,42 @@ public class AsignacionToxicologiaServiceImpl implements AsignacionToxicologiaSe
 
     @Override
     public List<AsignacionToxicologiaDTO> listar() {
-        // 1. Obtener el ID del empleado logueado desde el ThreadLocal del Filtro
+        // 1. Obtener el ID del empleado logueado desde el Token
         Long idLogueado = JwtAuthFilter.getCurrentEmpleadoId();
 
-        // Si el ID es nulo (por alguna falla de sesión), no devolvemos nada por seguridad
+        // Caso SuperAdmin (usuario base sin empleado asociado)
         if (idLogueado == null) {
-            System.err.println("⚠️ No se detectó ID de empleado en la sesión.");
-            return new ArrayList<>();
+            return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
         }
 
-        // 2. Buscar sus datos para verificar su rango/cargo
         Empleado empLogueado = empleadoRepository.findById(idLogueado).orElse(null);
-        if (empLogueado == null) return new ArrayList<>();
+        if (empLogueado == null) {
+            return repository.findAll().stream().map(this::mapToDTO).collect(Collectors.toList());
+        }
 
-        String cargo = empLogueado.getCargo().trim().toLowerCase();
+        String cargo = empLogueado.getCargo().toLowerCase().trim();
         List<AsignacionToxicologia> listaFinal;
 
-        // 🛡️ REGLA DE VISIBILIDAD MEJORADA
-        // Si es Administrador o Químico (Alan), ve todo el laboratorio.
-        if (cargo.contains("admin") || cargo.contains("quimico")) {
-            System.out.println("🔓 Acceso TOTAL para: " + empLogueado.getNombre());
+        // 🛡️ REGLA DE VISIBILIDAD POR EMPLEADO_ID (PARA QUÍMICOS)
+        if (cargo.contains("admin")) {
+            // El Administrador sigue viendo TODO
+            System.out.println("🔓 ACCESO TOTAL - Administrador: " + empLogueado.getNombre());
             listaFinal = repository.findAll();
-        } else {
+        }
+        else if (cargo.contains("quimico") || cargo.contains("químico")) {
+            // 🔒 Los Químicos SOLO ven los trabajos donde ellos son el PERITO ASIGNADO (empleado_id)
+            System.out.println("🔒 ACCESO PRIVADO (Por Asignación) - Químico: " + empLogueado.getNombre());
+            listaFinal = repository.findByEmpleadoId(idLogueado);
+        }
+        else {
+            // Los Auxiliares ven lo que ellos mismos REGISTRARON (emisor_id)
+            System.out.println("🔒 ACCESO PRIVADO (Por Creación) - Auxiliar: " + empLogueado.getNombre());
             listaFinal = repository.findByEmisorId(idLogueado);
         }
 
         return listaFinal.stream()
                 .map(this::mapToDTO)
-                .sorted((a, b) -> b.getId().compareTo(a.getId())) // Las más nuevas arriba
+                .sorted((a, b) -> b.getId().compareTo(a.getId())) // Más nuevos primero
                 .collect(Collectors.toList());
     }
 
@@ -274,8 +299,14 @@ public class AsignacionToxicologiaServiceImpl implements AsignacionToxicologiaSe
         if (quimicos != null && !quimicos.isEmpty()) {
             String mensaje = emisor.getNombre() + " " + emisor.getApellido() +
                     " ha asignado la tarea de toxicología ID " + saved.getId() + ".";
+
+            // ✅ MEJORA: Evitar duplicidad por usuario
+            java.util.Set<Long> idsProcesados = new java.util.HashSet<>();
+
             for (Empleado q : quimicos) {
-                notificationService.crearNotificacion(mensaje, "Toxicología", saved.getId(), q, emisor);
+                if (q.getUsuario() != null && idsProcesados.add(q.getUsuario().getId())) {
+                    notificationService.crearNotificacion(mensaje, "Toxicología", saved.getId(), q, emisor);
+                }
             }
         }
     }

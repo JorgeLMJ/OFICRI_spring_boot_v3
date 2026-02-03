@@ -11,6 +11,5 @@ import java.util.List;
 public interface AsignacionToxicologiaRepository extends JpaRepository<AsignacionToxicologia, Long> {
     List<AsignacionToxicologia> findByEmisorId(Long emisorId);
     long countByResultadoToxicologicoContaining(String sustancia);
-
-
+    List<AsignacionToxicologia> findByEmpleadoId(Long idLogueado);
 }

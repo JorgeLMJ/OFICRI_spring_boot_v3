@@ -11,4 +11,6 @@ import java.util.List;
 public interface AsignacionDosajeRepository extends JpaRepository<AsignacionDosaje, Long> {
     List<AsignacionDosaje> findByEmisorId(Long emisorId);
     long countByCualitativoContaining(String valor);
+
+    List<AsignacionDosaje> findByEmpleadoId(Long idLogueado);
 }

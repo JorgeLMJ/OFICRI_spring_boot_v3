@@ -11,5 +11,5 @@ public class AsignacionDosajeDTO {
     private String estado;
     private Long documentoId;
     private Long empleadoId;
-    private Long emisorId; // 👈 Debe estar aquí
+    private Long emisorId;
 }
