@@ -154,25 +154,32 @@ public class AsignacionToxicologiaServiceImpl implements AsignacionToxicologiaSe
     @Override
     @Transactional
     public void sincronizarDatosAlWord(Long id) {
+        // 1. Obtener la asignación y el documento
         AsignacionToxicologia asignacion = repository.findById(id).orElseThrow();
         Documento docBase = asignacion.getDocumento();
+
         if (docBase == null || docBase.getArchivo() == null) return;
 
         try (ByteArrayInputStream bis = new ByteArrayInputStream(docBase.getArchivo());
              XWPFDocument doc = new XWPFDocument(bis)) {
 
-            // 1. Obtener y ordenar sustancias
+            // --- 1. FILTRADO DE DATOS (Con .trim() para seguridad) ---
             Map<String, String> activas = filtrarSustanciasActivas(asignacion.getResultados());
+
             List<String> positivos = activas.entrySet().stream()
-                    .filter(e -> "Positivo".equalsIgnoreCase(e.getValue()))
-                    .map(Map.Entry::getKey).collect(Collectors.toList());
-            List<String> negativos = activas.entrySet().stream()
-                    .filter(e -> "Negativo".equalsIgnoreCase(e.getValue()))
+                    .filter(e -> e.getValue() != null && e.getValue().trim().equalsIgnoreCase("POSITIVO"))
                     .map(Map.Entry::getKey).collect(Collectors.toList());
 
-            // 2. Llenar la tabla de Exámenes (Hacia abajo)
+            List<String> negativos = activas.entrySet().stream()
+                    .filter(e -> e.getValue() != null && e.getValue().trim().equalsIgnoreCase("NEGATIVO"))
+                    .map(Map.Entry::getKey).collect(Collectors.toList());
+
+            System.out.println("DEBUG WORD -> ID: " + id + " | Positivos: " + positivos.size() + " | Negativos: " + negativos.size());
+
+            // --- 2. LLENADO DE TABLA (Busca por "EXAMEN") ---
             XWPFTable tablaExamen = null;
             for (XWPFTable table : doc.getTables()) {
+                // Buscamos la tabla que tenga "EXAMEN" en la primera celda
                 if (!table.getRows().isEmpty() && table.getRow(0).getCell(0).getText().toUpperCase().contains("EXAMEN")) {
                     tablaExamen = table;
                     break;
@@ -180,103 +187,103 @@ public class AsignacionToxicologiaServiceImpl implements AsignacionToxicologiaSe
             }
 
             if (tablaExamen != null) {
+                // Borrar filas viejas (dejamos solo la cabecera, índice 0)
                 while (tablaExamen.getRows().size() > 1) {
                     tablaExamen.removeRow(1);
                 }
-                for (String s : positivos) {
-                    XWPFTableRow row = tablaExamen.createRow();
-                    row.getCell(0).setText(s.toUpperCase());
-                    XWPFRun run = row.getCell(1).getParagraphs().get(0).createRun();
-                    run.setText("POSITIVO");
-                    run.setBold(true);
-                }
-                for (String s : negativos) {
-                    XWPFTableRow row = tablaExamen.createRow();
-                    row.getCell(0).setText(s.toUpperCase());
-                    XWPFRun run = row.getCell(1).getParagraphs().get(0).createRun();
-                    run.setText("NEGATIVO");
-                    run.setBold(true);
-                }
+                // Llenar nuevas filas
+                for (String s : positivos) agregarFilaTabla(tablaExamen, s, "POSITIVO");
+                for (String s : negativos) agregarFilaTabla(tablaExamen, s, "NEGATIVO");
             }
 
-            // 3. REEMPLAZO SIMPLIFICADO DEL MARCADOR $c_resultado
+            // --- 3. GENERAR TEXTO DE CONCLUSIÓN ---
             String conclusion = redactarTextoConclusiones(positivos, negativos);
 
-            // Buscamos en todos los párrafos del documento
+            // --- 4. REEMPLAZO INTELIGENTE (LA SOLUCIÓN) ---
+            // Buscamos la etiqueta O el inicio del texto antiguo para sobrescribirlo
+            String marcadorEtiqueta = "$c_resultado";
+            String textoAntiguoParcial = "-- En la muestra";
+
+            boolean reemplazado = false;
+
+            // A) Buscar en Párrafos normales
             for (XWPFParagraph p : doc.getParagraphs()) {
-                reemplazarTextoSimple(p, "$c_resultado", conclusion);
+                String textoP = p.getText();
+                // 💡 AQUÍ ESTÁ EL TRUCO: Busca la variable O el texto viejo
+                if (textoP != null && (textoP.contains(marcadorEtiqueta) || textoP.contains(textoAntiguoParcial))) {
+                    sobrescribirParrafoCompleto(p, conclusion);
+                    reemplazado = true;
+                }
             }
 
-            // Buscamos en todas las tablas por si acaso
-            for (XWPFTable tbl : doc.getTables()) {
-                for (XWPFTableRow row : tbl.getRows()) {
-                    for (XWPFTableCell cell : row.getTableCells()) {
-                        for (XWPFParagraph p : cell.getParagraphs()) {
-                            reemplazarTextoSimple(p, "$c_resultado", conclusion);
+            // B) Buscar dentro de Tablas (por si el texto está en una celda)
+            if (!reemplazado) {
+                for (XWPFTable tbl : doc.getTables()) {
+                    for (XWPFTableRow row : tbl.getRows()) {
+                        for (XWPFTableCell cell : row.getTableCells()) {
+                            for (XWPFParagraph p : cell.getParagraphs()) {
+                                String textoP = p.getText();
+                                if (textoP != null && (textoP.contains(marcadorEtiqueta) || textoP.contains(textoAntiguoParcial))) {
+                                    sobrescribirParrafoCompleto(p, conclusion);
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // 4. Guardar cambios
+            // --- 5. GUARDAR ---
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             doc.write(bos);
             docBase.setArchivo(bos.toByteArray());
             documentoRepository.save(docBase);
 
-            System.out.println("✅ Sincronización exitosa sin errores de puntero.");
+            System.out.println("✅ Sincronización finalizada exitosamente.");
 
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("Error crítico en sincronización: " + e.getMessage());
+            throw new RuntimeException("Error crítico Word: " + e.getMessage());
         }
     }
 
+    private void agregarFilaTabla(XWPFTable tabla, String sustancia, String resultado) {
+        XWPFTableRow row = tabla.createRow();
+        row.getCell(0).setText(sustancia.toUpperCase());
+        XWPFRun run = row.getCell(1).getParagraphs().get(0).createRun();
+        run.setText(resultado);
+        run.setBold(true);
+        run.setFontFamily("Times New Roman");
+        run.setFontSize(11);
+    }
+    private void sobrescribirParrafoCompleto(XWPFParagraph p, String nuevoTexto) {
+        // 1. Borrar todo el contenido actual del párrafo (runs)
+        for (int i = p.getRuns().size() - 1; i >= 0; i--) {
+            p.removeRun(i);
+        }
+
+        // 2. Crear un nuevo run con el texto correcto
+        // (Opcional: Si necesitas negritas parciales, usa tu lógica de split aquí)
+        XWPFRun run = p.createRun();
+        run.setText(nuevoTexto);
+        run.setFontFamily("Times New Roman");
+        run.setFontSize(12);
+
+        System.out.println("✏️ Párrafo actualizado con nuevo texto.");
+    }
     private String redactarTextoConclusiones(List<String> pos, List<String> neg) {
-        StringBuilder sb = new StringBuilder("-- En la muestra M-1 analizada se obtuvo un resultado: ");
-
-        if (!pos.isEmpty()) {
-            sb.append("**POSITIVO** para presencia de ").append(String.join(", ", pos)).append(" y ");
-        }
-
-        if (!neg.isEmpty()) {
-            sb.append("**NEGATIVO** para presencia de ").append(String.join(", ", neg)).append(".");
-        }
-
         if (pos.isEmpty() && neg.isEmpty()) {
-            sb.append("No se detectaron sustancias de interés toxicológico.");
+            return "-- En la muestra M-1 analizada se obtuvo un resultado: No se detectaron sustancias de interés toxicológico.";
+        }
+        StringBuilder sb = new StringBuilder("-- En la muestra M-1 analizada se obtuvo un resultado: ");
+        if (!pos.isEmpty()) {
+            sb.append("POSITIVO para presencia de ").append(String.join(", ", pos)); // Quitamos ** para simplificar este run directo
+            if (!neg.isEmpty()) sb.append(" y ");
+            else sb.append(".");
+        }
+        if (!neg.isEmpty()) {
+            sb.append("NEGATIVO para presencia de ").append(String.join(", ", neg)).append(".");
         }
         return sb.toString();
-    }
-
-    private void reemplazarTextoSimple(XWPFParagraph p, String target, String replacement) {
-        String pText = p.getText();
-        if (pText != null && pText.contains(target)) {
-            // 1. Limpiamos todos los runs existentes para evitar fragmentación y errores null
-            for (int i = p.getRuns().size() - 1; i >= 0; i--) {
-                p.removeRun(i);
-            }
-
-            // 2. Aplicamos el reemplazo de la etiqueta por el texto generado
-            String textoFinal = pText.replace(target, replacement);
-
-            // 3. Procesamos las negritas marcadas con **
-            String[] partes = textoFinal.split("\\*\\*");
-
-            for (int i = 0; i < partes.length; i++) {
-                XWPFRun run = p.createRun();
-                run.setText(partes[i]);
-
-                // Configuración de formato requerida
-                run.setFontFamily("Times New Roman");
-                run.setFontSize(12); // 👈 Tamaño 12 solicitado
-
-                // Si el índice es impar, el texto estaba entre **, aplicamos negrita
-                if (i % 2 != 0) {
-                    run.setBold(true);
-                }
-            }
-        }
     }
 
     private Map<String, String> filtrarSustanciasActivas(ToxicologiaResultadoDTO res) {
@@ -293,24 +300,6 @@ public class AsignacionToxicologiaServiceImpl implements AsignacionToxicologiaSe
         if (res.getCumarinas() != null) map.put("Cumarinas", res.getCumarinas());
         return map;
     }
-
-    private void enviarNotificacion(AsignacionToxicologia saved, Empleado emisor) {
-        List<Empleado> quimicos = empleadoRepository.findAllByCargo("Quimico Farmaceutico");
-        if (quimicos != null && !quimicos.isEmpty()) {
-            String mensaje = emisor.getNombre() + " " + emisor.getApellido() +
-                    " ha asignado la tarea de toxicología ID " + saved.getId() + ".";
-
-            // ✅ MEJORA: Evitar duplicidad por usuario
-            java.util.Set<Long> idsProcesados = new java.util.HashSet<>();
-
-            for (Empleado q : quimicos) {
-                if (q.getUsuario() != null && idsProcesados.add(q.getUsuario().getId())) {
-                    notificationService.crearNotificacion(mensaje, "Toxicología", saved.getId(), q, emisor);
-                }
-            }
-        }
-    }
-
     private AsignacionToxicologiaDTO mapToDTO(AsignacionToxicologia asignacion) {
         AsignacionToxicologiaDTO dto = new AsignacionToxicologiaDTO();
         dto.setId(asignacion.getId());

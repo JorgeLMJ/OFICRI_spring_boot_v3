@@ -89,13 +89,10 @@ public class DocumentoServiceImpl implements DocumentoService {
     @Override
     @Transactional
     public void actualizarDesdeUrlOnlyOffice(Long id, String urlDescarga, Long empleadoId) {
-        // 🚩 CORRECCIÓN DEFINITIVA:
-        // Si OnlyOffice envía 'onlyoffice_pruebas' o 'onlyoffice_server',
-        // IntelliJ debe cambiarlo a 'localhost' para poder descargar el archivo.
         if (urlDescarga.contains("onlyoffice_pruebas")) {
-            urlDescarga = urlDescarga.replace("onlyoffice_pruebas", "localhost");
+            urlDescarga = urlDescarga.replace("onlyoffice_pruebas", "localhost:9000");
         } else if (urlDescarga.contains("onlyoffice_server")) {
-            urlDescarga = urlDescarga.replace("onlyoffice_server", "localhost");
+            urlDescarga = urlDescarga.replace("onlyoffice_server", "localhost:9000");
         }
 
         System.out.println("⬇️ Descargando cambios desde OnlyOffice: " + urlDescarga);

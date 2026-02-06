@@ -24,9 +24,6 @@ import java.util.Map;
 public class DocumentoController {
 
     private final DocumentoService service;
-    //private static final String DOCKER_HOST = "host.docker.internal";
-
-    // ✅ 1. CREAR NUEVO (Único punto de entrada para crear ID)
     // ✅ 1. CREAR NUEVO (Asignando el empleado de inmediato)
     @PostMapping("/nuevo")
     public ResponseEntity<Long> iniciarNuevoDocumento() {

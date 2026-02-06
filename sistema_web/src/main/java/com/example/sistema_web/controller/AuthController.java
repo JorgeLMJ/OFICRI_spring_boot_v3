@@ -65,22 +65,15 @@ public class AuthController {
 
         Optional<Usuario> usuarioOpt = usuarioRepository.findByEmail(email);
         if (usuarioOpt.isEmpty()) {
-            return ResponseEntity.status(404).body("Usuario no encontrado");
+            return ResponseEntity.status(404).body(Map.of("message", "Usuario no encontrado"));
         }
-
         Usuario usuario = usuarioOpt.get();
-
-        // 🔑 Generar token
         String token = UUID.randomUUID().toString();
-
-        // 👉 Guardar token y expiración en BD
         usuario.setResetToken(token);
         usuario.setTokenExpiration(LocalDateTime.now().plusMinutes(30));
         usuarioRepository.save(usuario);
 
         String link = "http://localhost:4200/reset-password?token=" + token;
-
-        // 📧 Enviar correo
         emailService.enviarCorreo(
                 usuario.getEmail(),
                 "Recuperación de contraseña",
@@ -89,8 +82,7 @@ public class AuthController {
                         link +
                         "\n\nEste enlace expirará en 30 minutos."
         );
-
-        return ResponseEntity.ok("Se ha enviado un enlace de recuperación a tu correo 📧");
+        return ResponseEntity.ok(Map.of("message", "Se ha enviado un enlace de recuperación a tu correo 📧"));
     }
 
     // ============================
